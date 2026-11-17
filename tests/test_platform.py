@@ -228,3 +228,16 @@ def test_generate_application_documents(client, monkeypatch):
     assert me["plan"]["usage"]["generations"] == 2
     latest = {k["code"]: k["doc"] for k in client.get(f"/api/lots/{lot_id}/docs").json()["kinds"]}
     assert all(latest.values())
+
+
+def test_weekly_report(client):
+    client.put("/api/me", json={"keywords": ["ремонт кровли", "канцтовары", "мебель", "ремонт"]})
+    r = client.get("/api/report/weekly").json()
+    assert r["missed"]["count"] > 0 and r["missed"]["total"] > 0 and r["winners"]
+    assert all(a["winner"] for a in r["missed"]["items"])
+    r30 = client.get("/api/report/weekly?days=30").json()
+    assert r30["missed"]["count"] >= r["missed"]["count"]
+    from app.bot import texts as T
+
+    text = T.weekly_report(r)
+    assert "Мимо вас прошло" in text and len(text) < 4096

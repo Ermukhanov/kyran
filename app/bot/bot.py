@@ -20,7 +20,7 @@ from app.ai import agent, client as ai
 from app.api.auth import make_link_token
 from app.bot import texts as T
 from app.db import Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
-from app.services import billing, core, docgen, login, monitors, uploads
+from app.services import billing, core, docgen, login, monitors, report, uploads
 from app.services.matcher import parse_keywords
 from app.sources.registry import SOURCES
 
@@ -644,6 +644,36 @@ async def monitors_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("Уведомление о сайте не отправилось")
 
 
+async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        if not user.onboarded:
+            await reply(update, "Сначала настройте подбор: /start")
+            return
+        r = await report.weekly(s, user)
+    await reply(update, T.weekly_report(r), reply_markup=open_app_markup("Подробный отчёт") and InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Подробный отчёт", web_app=WebAppInfo(app_url("#report")))]]))
+
+
+async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Понедельник утром: что прошло мимо за неделю. Только активные тарифы и включённые уведомления."""
+    async with db.Session() as s:
+        users = (await s.execute(select(User).where(User.onboarded.is_(True), User.notify.is_(True)))).scalars().all()
+        payloads = []
+        for user in users:
+            if not billing.current_plan(user)[1]:
+                continue
+            r = await report.weekly(s, user)
+            if r["missed"]["count"] or r["soon"]:
+                payloads.append((user.id, T.weekly_report(r)))
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("Подробный отчёт", web_app=WebAppInfo(app_url("#report")))]]) if config.PUBLIC_URL else None
+    for uid, text in payloads:
+        try:
+            await context.bot.send_message(uid, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW, reply_markup=markup)
+        except Exception:
+            log.exception("Отчёт недели не отправился %s", uid)
+
+
 async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Напоминания: сроки подачи по закупкам в воронке и истекающие документы."""
     now = utcnow()
@@ -713,7 +743,7 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         ("app", "Открыть Kyran"), ("find", "Лучшие тендеры сейчас"), ("urgent", "Срочные"),
         ("profile", "Мой профиль"), ("sites", "Сайты под наблюдением"), ("watch", "Следить за сайтом"),
-        ("plan", "Мой тариф"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
+        ("report", "Итоги недели"), ("plan", "Мой тариф"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
     ])
 
 
@@ -735,7 +765,7 @@ def build() -> Application:
     for name, fn in [("app", app_cmd), ("web", web_cmd), ("find", find_cmd), ("urgent", urgent_cmd), ("profile", profile_cmd),
                      ("stop", stop_cmd), ("resume", resume_cmd), ("help", help_cmd), ("stats", stats_cmd),
                      ("logout_all", logout_all_cmd), ("plan", plan_cmd), ("grant", grant_cmd),
-                     ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd)]:
+                     ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd), ("report", report_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
     application.add_handler(CallbackQueryHandler(on_generate_button, pattern=r"^gen:(tech|clarify|cover|inventory|experience):\d+$"))
@@ -747,4 +777,5 @@ def build() -> Application:
     jq.run_repeating(monitors_job, interval=config.WEBSITE_EVERY_MIN * 60, first=120)
     jq.run_daily(digest_job, time=dtime(hour=config.DIGEST_HOUR, tzinfo=config.TZ))
     jq.run_repeating(reminders_job, interval=3600, first=60)
+    jq.run_daily(weekly_report_job, time=dtime(hour=10, tzinfo=config.TZ), days=(1,))  # понедельник
     return application

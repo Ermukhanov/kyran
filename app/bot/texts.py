@@ -43,6 +43,9 @@ HELP = (
     "<b>Мониторинг сайтов заказчиков</b>\n"
     "/watch &lt;адрес&gt; — следить за страницей закупок\n"
     "/sites — список, /unwatch &lt;номер&gt; — убрать\n\n"
+    "<b>Отчёт</b>\n"
+    "/report — что прошло мимо вас за неделю: суммы, победители, снижение цены. "
+    "Приходит сам по понедельникам.\n\n"
     "<b>Аккаунт</b>\n"
     "/profile — профиль, /plan — тариф и лимиты\n"
     "/stop и /resume — пауза и включение уведомлений\n"
@@ -146,3 +149,41 @@ def upload_report(lot: Lot, a: dict, limit_chars: int = 3900) -> str:
             break
         text += ("\n\n" if text else "") + p
     return text + "\n\n<i>Разбор справочный — сверяйте с документацией.</i>"
+
+
+def weekly_report(r: dict, limit_chars: int = 3900) -> str:
+    m, act = r["missed"], r["activity"]
+    lines = ["<b>Итоги недели</b>"]
+    if m["count"]:
+        lines.append(f"Мимо вас прошло <b>{m['count']}</b> подходящих закупок на <b>{money(m['total'], short=True)}</b> — "
+                     "их выиграли другие поставщики.")
+        if m["median_discount"] is not None:
+            lines.append(f"Победители снижали цену в среднем на {m['median_discount']}%.")
+        if r["winners"]:
+            lines.append("\n<b>Кто забрал больше всего</b>\n" + "\n".join(
+                f"• {escape(w['name'][:80])} — {w['wins']} шт., {money(w['total'], short=True)}" for w in r["winners"][:3]))
+        lines.append("\n<b>Крупнейшие</b>\n" + "\n".join(
+            f"• {escape(a['title'][:90])} — {money(a['price'], short=True)}{' (−' + str(a['discount']) + '%)' if a['discount'] else ''}"
+            for a in m["items"][:3]))
+    else:
+        lines.append("За неделю подходящих итогов закупок не было.")
+    if r["won"]["count"]:
+        lines.append(f"\nВаши победы: {r['won']['count']} на {money(r['won']['total'], short=True)}.")
+    st = act["stages"]
+    done = []
+    if act["new_matches"]:
+        done.append(f"новых подходящих закупок — {act['new_matches']}")
+    if st.get("submitted"):
+        done.append(f"подано заявок — {st['submitted']}")
+    if st.get("won"):
+        done.append(f"побед — {st['won']}")
+    if done:
+        lines.append("\n<b>Ваша неделя:</b> " + ", ".join(done) + ".")
+    if r["soon"]:
+        lines.append("\n<b>Не упустите — закрываются в ближайшие дни</b>\n" + "\n".join(
+            f"• {escape(x['title'][:90])} — {money(x['amount'], short=True)}, {time_left(datetime.fromisoformat(x['deadline']) if x['deadline'] else None)}"
+            for x in r["soon"]))
+    if r.get("is_demo"):
+        lines.append("\n<i>По демонстрационным данным.</i>")
+    text = "\n".join(lines)
+    return text[:limit_chars]

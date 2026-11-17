@@ -86,11 +86,12 @@ def demo_awards(now: datetime) -> list[AwardData]:
             disc = 0.0 if participants == 1 else max(0.005, min(0.45, rnd.gauss(mean + 0.012 * participants, spread)))
             winner = "" if failed else rnd.choice(WINNERS[cat])
             out.append(AwardData(
-                source="demo", ext_id=f"a{i}-{j}", title=title if j % 3 else f"{title} (повторная закупка)",
+                # «свежие» итоги получают номер недели, чтобы демо-отчёт за неделю не пустел
+                source="demo", ext_id=f"a{i}-{j}" + (now.strftime("-w%G%V") if j in (4, 7) else ""), title=title if j % 3 else f"{title} (повторная закупка)",
                 customer=cust, customer_bin=fake_bin(cust), region=region, method=method,
                 amount=round(planned, -3), price=None if failed else round(planned * (1 - disc), -3),
                 winner=winner, winner_bin=fake_bin(winner) if winner else "", participants=participants,
-                status="failed" if failed else "done", awarded_at=now - timedelta(days=rnd.randint(20, 700)), is_demo=True,
+                status="failed" if failed else "done", awarded_at=now - timedelta(days=rnd.randint(1, 6) if j in (4, 7) else rnd.randint(20, 700)), is_demo=True,
             ))
     return out
 

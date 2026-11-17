@@ -128,6 +128,7 @@
       <div class="page-head">
         <div><h1>Тендеры под вашу компанию</h1><p class="page-sub">Открытые закупки, отобранные по профилю. Отсортированы по совпадению.</p></div>
       </div>
+      <a class="missed" id="missed" href="#report" hidden></a>
       <section class="kpis" aria-label="Сводка">
         <div class="kpi"><div class="kpi-label">Открыто под вас</div><div class="kpi-value">${s.open}</div></div>
         <div class="kpi"><div class="kpi-label">Общая сумма</div><div class="kpi-value">${esc(moneyShort(s.total_amount))}</div></div>
@@ -156,6 +157,14 @@
     view.querySelector('[data-act="urgent"]').addEventListener("click", () => setFilter("urgent"));
     view.querySelector('[data-act="everywhere"]').addEventListener("click", () => searchEverywhere(input.value.trim()));
     loadLots();
+    api("/report/weekly").then((r) => {
+      const el = document.getElementById("missed");
+      if (!el || !r.missed.count) return;
+      el.innerHTML = `<span class="missed-num">${esc(moneyShort(r.missed.total))}</span>
+        <span class="missed-text">ушло конкурентам за неделю: ${r.missed.count} ${plural(r.missed.count, "подходящая закупка", "подходящие закупки", "подходящих закупок")}${r.missed.median_discount != null ? `, снижение в среднем ${r.missed.median_discount}%` : ""}</span>
+        <span class="missed-link">Отчёт недели</span>`;
+      el.hidden = false;
+    }).catch(() => {});
   }
 
   async function loadLots() {
@@ -645,6 +654,54 @@
     }));
   }
 
+
+  // ── Отчёт недели ────────────────────────────────
+  async function renderReport() {
+    view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
+    const days = state.reportDays || 7;
+    const r = await api("/report/weekly?days=" + days);
+    const m = r.missed, st = r.activity.stages;
+    const maxW = Math.max(1, ...r.winners.map((w) => w.total));
+    view.innerHTML = `
+      <div class="crumbs"><a href="#feed">Закупки</a> / Отчёт</div>
+      <div class="page-head"><div><h1>Что прошло мимо вас</h1>
+        <p class="page-sub">Итоги подходящих вам закупок, которые выиграли другие. Помогает понять, где вы теряете деньги и с кем конкурируете.${r.is_demo ? " По демонстрационным данным." : ""}</p></div>
+        <div class="segmented" role="group" aria-label="Период">${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"]].map(([d, n]) => `<button data-days="${d}" aria-pressed="${d === days}">${n}</button>`).join("")}</div></div>
+      <section class="kpis">
+        <div class="kpi"><div class="kpi-label">Ушло конкурентам</div><div class="kpi-value bad">${esc(moneyShort(m.total))}</div></div>
+        <div class="kpi"><div class="kpi-label">Подходящих закупок</div><div class="kpi-value">${m.count}</div></div>
+        <div class="kpi"><div class="kpi-label">Среднее снижение у победителей</div><div class="kpi-value">${m.median_discount != null ? m.median_discount + "%" : "—"}</div></div>
+        <div class="kpi"><div class="kpi-label">Ваши победы</div><div class="kpi-value ${r.won.count ? "ok" : ""}">${r.won.count}${r.won.total ? `<small> · ${esc(moneyShort(r.won.total))}</small>` : ""}</div></div>
+      </section>
+      <div class="report-grid">
+        <section class="panel"><div class="panel-head"><h2>Кто забирает ваши закупки</h2></div><div class="panel-body">
+          ${r.winners.length ? r.winners.map((w) => `<div class="wbar"><div class="wbar-top"><span>${esc(w.name)}</span><b>${esc(moneyShort(w.total))}</b></div>
+            <div class="wbar-line"><i style="--p:${(w.total / maxW) * 100}"></i></div><div class="cell-sub">${w.wins} ${plural(w.wins, "победа", "победы", "побед")}</div></div>`).join("")
+            : `<p class="cell-sub">За период подходящих итогов нет.</p>`}
+        </div></section>
+        <section class="panel"><div class="panel-head"><h2>Ваша активность</h2></div><div class="panel-body">
+          <dl class="facts">
+            <dt>Новых подходящих</dt><dd>${r.activity.new_matches}</dd>
+            <dt>В подготовке</dt><dd>${st.preparing || 0}</dd>
+            <dt>Подано заявок</dt><dd>${st.submitted || 0}</dd>
+            <dt>Побед</dt><dd>${st.won || 0}</dd>
+          </dl>
+          ${r.soon.length ? `<h3 class="mkt-h" style="margin-top:16px">Не упустите — закрываются в ближайшие дни</h3>
+            ${r.soon.map((x) => { const h = (new Date(x.deadline) - Date.now()) / 36e5; const left = timeLeft(h);
+              return `<a class="soon" href="#lot/${x.id}"><span class="cell-title">${esc(x.title)}</span><span class="cell-sub">${esc(moneyShort(x.amount))} · <span class="left ${left.cls}">${esc(left.text)}</span></span></a>`; }).join("")}` : ""}
+        </div></section>
+      </div>
+      <section class="panel" style="margin-top:16px"><div class="panel-head"><h2>Крупнейшие закупки, которые ушли другим</h2></div>
+        ${m.items.length ? `<table class="grid stack"><thead><tr><th>Закупка</th><th>Победитель</th><th class="right">Цена договора</th><th class="right">Снижение</th><th>Участников</th></tr></thead>
+          <tbody>${m.items.map((a) => `<tr><td><div class="cell-title">${esc(a.title)}</div><div class="cell-sub">${esc(a.customer)} · ${esc(dateShort(a.date))}</div></td>
+            <td>${esc(a.winner)}</td><td class="right"><span class="amount">${esc(money(a.price))}</span></td>
+            <td class="right">${a.discount != null ? a.discount + "%" : "—"}</td><td>${a.participants ?? "—"}</td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty"><p>За выбранный период подходящих итогов нет. Попробуйте период больше или расширьте направления в профиле.</p></div>`}
+      </section>
+      <p class="hint" style="margin-top:12px">Отчёт за неделю приходит в Telegram по понедельникам. В боте — команда /report.</p>`;
+    view.querySelectorAll("[data-days]").forEach((b) => b.addEventListener("click", () => { state.reportDays = +b.dataset.days; renderReport(); }));
+  }
+
   // ── Разборы ─────────────────────────────────────
   async function renderAnalyses() {
     view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
@@ -948,7 +1005,7 @@
   async function route() {
     const [page, arg] = (location.hash.slice(1) || "feed").split("/");
     if (tg && page !== "lot") { tg.BackButton.hide(); tg.BackButton.offClick(goBack); }
-    const tab = page === "lot" ? "feed" : page;
+    const tab = page === "lot" || page === "report" ? "feed" : page;
     document.body.classList.remove("auth"); clearInterval(pollTimer);
     document.querySelectorAll("[data-tab]").forEach((a) => (a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
     window.scrollTo(0, 0);
@@ -958,6 +1015,7 @@
       if (page === "pipeline") return await renderPipeline();
       if (page === "documents") return await renderDocuments();
       if (page === "analyses") return await renderAnalyses();
+      if (page === "report") return await renderReport();
       if (page === "profile") return renderProfile(arg);
       return await renderFeed();
     } catch (e) {

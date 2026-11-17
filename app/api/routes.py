@@ -14,7 +14,7 @@ from app.ai import client as ai
 from app.api.auth import current_tg_user
 from app.db import DOC_KINDS, STAGES, Analysis, Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
 from app import runtime
-from app.services import billing, docgen, documents as docsvc, insights, login
+from app.services import billing, docgen, documents as docsvc, insights, login, report
 from app.db import GeneratedDoc
 from app.services import core, monitors
 from app.services.analyses import get_analysis, get_or_create_analysis
@@ -273,6 +273,11 @@ async def delete_monitor(monitor_id: int, u: User = Depends(get_user), s: AsyncS
     m.active = False
     await s.commit()
     return {"ok": True}
+
+
+@router.get("/report/weekly")
+async def weekly_report(days: int = 7, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    return await report.weekly(s, u, days=max(1, min(days, 90)))
 
 
 # ── Разборы ────────────────────────────────────────────────

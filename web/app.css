@@ -372,6 +372,24 @@ body.auth .view { padding: 0; max-width: none; }
 .login-foot { color: var(--muted); font-size: 12.5px; margin: 0; }
 
 
+/* ── Отчёт недели ─────────────────────────── */
+.missed { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--bad) 25%, var(--line)); background: var(--bad-soft); color: var(--ink); }
+.missed:hover { text-decoration: none; border-color: var(--bad); }
+.missed-num { font-size: 18px; font-weight: 600; color: var(--bad); font-variant-numeric: tabular-nums; }
+.missed-text { color: var(--ink-2); flex: 1; min-width: 200px; }
+.missed-link { color: var(--accent); font-weight: 500; }
+.kpi-value.ok { color: var(--ok); }
+.report-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
+.report-grid .panel + .panel { margin-top: 0; }
+.wbar + .wbar { margin-top: 14px; }
+.wbar-top { display: flex; justify-content: space-between; gap: 12px; }
+.wbar-top b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wbar-line { height: 6px; border-radius: 3px; background: var(--subtle); margin: 6px 0 2px; overflow: hidden; }
+.wbar-line i { display: block; height: 100%; width: calc(var(--p) * 1%); background: var(--bad); opacity: .75; }
+.soon { display: grid; padding: 8px 0; border-top: 1px solid var(--line); color: inherit; }
+.soon:hover { text-decoration: none; }
+.soon:hover .cell-title { color: var(--accent); }
+
 /* ── Документы заявки ─────────────────────── */
 .gen-warn { margin: 14px 20px 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--ink-2); font-size: 13px; }
 .gen-list { display: grid; padding: 6px 0; }
@@ -459,7 +477,7 @@ body.auth .view { padding: 0; max-width: none; }
   table.stack td { padding: 2px 0 !important; border: none !important; text-align: left !important; }
   .kpis-3 { grid-template-columns: 1fr 1fr 1fr; }
   .kpis-3 .kpi:nth-child(3) { border-left: 1px solid var(--line); border-top: none; }
-  .form-grid, .plan-now, .plans, .mkt-grid { grid-template-columns: 1fr; }
+  .form-grid, .plan-now, .plans, .mkt-grid, .report-grid { grid-template-columns: 1fr; }
   .mkt-kpis > div { padding: 12px 14px; }
   .mkt-kpis b { font-size: 17px; }
   .info-list > div { grid-template-columns: 1fr; gap: 2px; }
