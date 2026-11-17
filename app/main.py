@@ -43,6 +43,13 @@ async def lifespan(_: FastAPI):
     log.info("Kyran: источники %s, ИИ %s, веб %s",
              {s.name: s.enabled for s in SOURCES}, "вкл" if ai.available() else "выкл", config.PUBLIC_URL or "—")
     bot_app, task = None, None
+
+    async def zakup_selftest():
+        z = next((x for x in SOURCES if x.name == "zakup" and x.enabled), None)
+        if z:
+            for q, d in (("кабель", True), ("кабель", False)):
+                log.info("Самопроверка zakup.gov.kz (%s, фильтр по сроку: %s):\n%s", q, d, await z.diagnose(q, d))
+    selftest = asyncio.create_task(zakup_selftest())
     if config.TELEGRAM_BOT_TOKEN:
         from app.bot.bot import build, post_init
 
