@@ -14,11 +14,9 @@
   const state = { me: null, filter: "all", query: "", sort: { key: "score", dir: -1 }, items: [] };
 
   // ── Тема ────────────────────────────────────────
-  function applyTheme() {
-    const dark = tg ? tg.colorScheme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
-  }
-  if (tg) { tg.ready(); tg.expand(); tg.onEvent("themeChanged", applyTheme); }
+  // Светлая тема всегда — так интерфейс выглядит одинаково в Telegram и в браузере.
+  function applyTheme() { document.documentElement.dataset.theme = "light"; }
+  if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#FFFFFF"); tg.setBackgroundColor("#F5F6F8"); } catch (_) {} }
   applyTheme();
 
   // ── Авторизация ─────────────────────────────────
