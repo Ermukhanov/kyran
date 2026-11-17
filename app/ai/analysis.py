@@ -128,3 +128,37 @@ async def analyze(user: User, lot: Lot) -> dict:
         data["verdict"] = "consider"
     data["docs_used"] = [name for name, _ in docs]
     return data
+
+
+ASK_SYSTEM = (
+    "Ты — помощник тендерного специалиста в Казахстане. Отвечаешь на вопрос по конкретной закупке "
+    "строго по карточке, документации и уже сделанному разбору. Если ответа в материалах нет — так и скажи "
+    "и подскажи, где искать (техспецификация, проект договора, запрос разъяснений заказчику). "
+    "Пиши кратко, по-деловому, без эмодзи. Указывай источник: название документа или «карточка закупки»."
+)
+
+
+async def ask(user: User, lot: Lot, question: str, analysis: dict | None, history: list[dict] | None = None) -> str:
+    """Ответ на вопрос по закупке. RuntimeError без ключа ИИ."""
+    if not client.available():
+        raise RuntimeError("Вопросы по документации заработают после подключения ключа ANTHROPIC_API_KEY")
+    docs = await load_documents(lot)
+    budget, blocks = MAX_DOC_CHARS, []
+    for name, text in docs:
+        chunk = text[:budget]
+        budget -= len(chunk)
+        blocks.append(f"=== {name} ===\n{chunk}")
+        if budget <= 0:
+            break
+    context = (
+        f"Компания:\n{profile_text(user)}\n\nЗакупка:\n{json.dumps(lot_card(lot), ensure_ascii=False, indent=1)}\n\n"
+        f"Разбор:\n{json.dumps(analysis, ensure_ascii=False) if analysis else 'не выполнялся'}\n\n"
+        f"Документация:\n{chr(10).join(blocks) if blocks else 'не загружена'}"
+    )
+    messages = [{"role": "user", "content": context}, {"role": "assistant", "content": "Материалы получил. Задавайте вопрос."}]
+    for h in (history or [])[-6:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": str(h["content"])[:2000]})
+    messages.append({"role": "user", "content": question[:1000]})
+    resp = await client.client().messages.create(model=config.AI_SMART_MODEL, max_tokens=1200, system=ASK_SYSTEM, messages=messages)
+    return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()

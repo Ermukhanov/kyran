@@ -111,6 +111,11 @@
     box.innerHTML = `<span class="avatar">${esc(initials(u))}</span><span class="user-meta"><strong>${esc(u.company_name || u.name || "Моя компания")}</strong>
       <span class="plan-chip ${p.active ? "" : "off"}">${esc(p.name)}${p.until ? " · до " + esc(dateShort(p.until)) : ""}</span></span>`;
     box.hidden = false;
+    const strip = document.getElementById("plan-strip");
+    const daysLeft = p.until ? Math.ceil((new Date(p.until) - Date.now()) / 864e5) : null;
+    if (!p.active) { strip.textContent = `${p.code === "trial" ? "Пробный период" : "Тариф"} закончился. Уведомления и ИИ-разборы приостановлены — выберите тариф.`; strip.hidden = false; }
+    else if (p.code === "trial" && daysLeft != null && daysLeft <= 3) { strip.textContent = `Пробный период заканчивается через ${daysLeft} ${plural(daysLeft, "день", "дня", "дней")}. Выберите тариф, чтобы не потерять подборку.`; strip.hidden = false; }
+    else strip.hidden = true;
   }
   async function loadMe() { state.me = await api("/me"); paintStatus(); return state.me; }
 
@@ -222,6 +227,7 @@
 
   // ── Карточка тендера ────────────────────────────
   async function renderLot(id) {
+    state.market = null;
     view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
     if (tg) { tg.BackButton.show(); tg.BackButton.onClick(goBack); }
     const data = await api("/lots/" + id);
@@ -254,6 +260,11 @@
             </div>
           </section>
 
+          <section class="panel" id="market-panel" hidden>
+            <div class="panel-head"><h2>Рынок и конкуренты</h2><span class="hint" id="market-note"></span></div>
+            <div id="market"></div>
+          </section>
+
           <section class="panel" id="ready-panel" hidden>
             <div class="panel-head"><h2>Готовность к заявке</h2><span id="ready-sum" class="ready-sum"></span></div>
             <div id="ready"></div>
@@ -262,6 +273,15 @@
           <section class="panel" id="analysis-panel">
             <div class="panel-head"><h2>ИИ-разбор</h2><span id="analysis-action"></span></div>
             <div id="analysis"></div>
+          </section>
+
+          <section class="panel" id="ask-panel">
+            <div class="panel-head"><h2>Вопрос по закупке</h2><span class="hint">Ответ по документации, с указанием источника</span></div>
+            <div class="panel-body ask">
+              <div class="ask-log" id="ask-log"></div>
+              <div class="ask-chips">${["Предусмотрен ли аванс?", "Какие штрафы и пени по договору?", "Какой опыт требуется?", "Можно ли предложить аналог?"].map((q) => `<button class="chip" type="button">${q}</button>`).join("")}</div>
+              <form class="ask-form" id="ask-form"><input class="input" name="q" maxlength="1000" placeholder="Например: какие сроки поставки и где место поставки?" autocomplete="off"><button class="btn btn-primary" type="submit">Спросить</button></form>
+            </div>
           </section>
 
           ${docs.length ? `<section class="panel"><div class="panel-head"><h2>Документация</h2></div><div class="panel-body"><ul class="a-list">${docs.map((d) => `<li><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a></li>`).join("")}</ul></div></section>` : ""}
@@ -288,6 +308,8 @@
     renderAnalysis(id, data.analysis, data.ai);
     if (data.analysis) loadReadiness(id);
     bindCalc(l);
+    loadMarket(l);
+    bindAsk(id, data.ai);
     const stage = view.querySelector("#stage");
     const note = view.querySelector("#note");
     stage.addEventListener("change", async () => {
@@ -385,6 +407,64 @@
       <a href="#documents">Открыть библиотеку</a></div>`;
   }
 
+
+  // ── Рынок и конкуренты ──────────────────────────
+  async function loadMarket(l) {
+    let r;
+    try { r = await api(`/lots/${l.id}/insights`); } catch (_) { return; }
+    if (!r.available) return;
+    state.market = r;
+    const panel = document.getElementById("market-panel");
+    if (!panel) return;
+    panel.hidden = false;
+    document.getElementById("market-note").textContent = `${r.similar_count} ${plural(r.similar_count, "похожая закупка", "похожие закупки", "похожих закупок")}${r.is_demo ? " · демо-данные" : ""}`;
+    const p = r.price;
+    const max = Math.max(1, ...r.histogram.counts);
+    const hist = r.histogram.counts.map((c, i) => `<div class="hbar" title="${i * 5}–${i === 6 ? "…" : i * 5 + 5}%: ${c}"><i style="--h:${(c / max) * 100}"></i><span>${i === 6 ? "30+" : i * 5}</span></div>`).join("");
+    const cust = r.customer;
+    const warn = [];
+    if (cust.loyal_winner) warn.push(`У заказчика устойчивый поставщик: <b>${esc(cust.loyal_winner.name)}</b> выиграл ${cust.loyal_winner.wins} из ${cust.done} закупок.`);
+    if (cust.failed) warn.push(`${cust.failed} ${plural(cust.failed, "закупка", "закупки", "закупок")} заказчика ${plural(cust.failed, "не состоялась", "не состоялись", "не состоялись")} — часто из-за единственной заявки.`);
+    if (r.single_share >= 30) warn.push(`В ${r.single_share}% похожих закупок была одна заявка — шанс выиграть без снижения.`);
+    document.getElementById("market").innerHTML = `
+      <div class="mkt-kpis">
+        <div><span class="field-label">Снижение цены</span><b>${p ? p.median_discount + "%" : "—"}</b><small>${p ? `обычно ${p.low_discount}–${p.high_discount}%` : "нет данных"}</small></div>
+        <div><span class="field-label">Участников</span><b>${r.avg_participants ?? "—"}</b><small>в среднем на закупку</small></div>
+        <div><span class="field-label">Рекомендуемая цена</span><b>${p ? esc(moneyShort(p.recommended)) : "—"}</b><small>${p ? `${esc(moneyShort(p.range[0]))} – ${esc(moneyShort(p.range[1]))}` : ""}</small></div>
+      </div>
+      <div class="mkt-grid">
+        <div><h3 class="mkt-h">Распределение снижения, %</h3><div class="hist">${hist}</div></div>
+        <div><h3 class="mkt-h">Кто выигрывает похожие закупки</h3>
+          ${r.competitors.length ? `<table class="a-table mkt-table">${r.competitors.map((c) => `<tr><td>${esc(c.name)}</td><td class="right nowrap">${c.wins} ${plural(c.wins, "победа", "победы", "побед")}</td><td class="right nowrap cell-sub">${c.avg_discount ? "−" + c.avg_discount + "%" : c.avg_discount === 0 ? "без снижения" : ""}</td></tr>`).join("")}</table>` : `<p class="cell-sub">Нет данных</p>`}</div>
+      </div>
+      ${warn.length ? `<div class="mkt-warn">${warn.map((w) => `<p>${w}</p>`).join("")}</div>` : ""}
+      ${cust.recent.length ? `<details class="mkt-more"><summary>История заказчика: ${cust.total} ${plural(cust.total, "закупка", "закупки", "закупок")}</summary>
+        <table class="a-table">${cust.recent.map((a) => `<tr><td>${esc(a.title)}<div class="cell-sub">${esc(dateShort(a.date))} · ${a.status === "failed" ? "не состоялась" : esc(a.winner)}${a.participants ? " · участников: " + a.participants : ""}</div></td>
+          <td class="right nowrap"><span class="amount">${esc(moneyShort(a.price || a.amount))}</span>${a.discount != null ? `<div class="cell-sub">−${a.discount}%</div>` : ""}</td></tr>`).join("")}</table></details>` : ""}`;
+    bindCalc(l); // пересчитать с рыночной ценой
+  }
+
+  // ── Вопросы по закупке ──────────────────────────
+  function bindAsk(id, aiOn) {
+    const log = document.getElementById("ask-log"), form = document.getElementById("ask-form");
+    if (!form) return;
+    const history = [];
+    if (!aiOn) log.innerHTML = `<p class="cell-sub">Ответы по документации заработают после подключения ИИ-модуля.</p>`;
+    const send = async (q) => {
+      q = q.trim(); if (q.length < 2) return;
+      log.insertAdjacentHTML("beforeend", `<div class="msg me">${esc(q)}</div><div class="msg ai pending"><span class="spinner"></span>Ищу ответ в документации…</div>`);
+      form.q.value = "";
+      const pending = log.querySelector(".pending");
+      try {
+        const { answer } = await api(`/lots/${id}/ask`, { method: "POST", body: { question: q, history } });
+        history.push({ role: "user", content: q }, { role: "assistant", content: answer });
+        pending.classList.remove("pending"); pending.textContent = answer;
+      } catch (e) { pending.classList.remove("pending"); pending.classList.add("err"); pending.textContent = e.message; }
+    };
+    form.addEventListener("submit", (e) => { e.preventDefault(); send(form.q.value); });
+    document.querySelectorAll(".ask-chips .chip").forEach((c) => c.addEventListener("click", () => send(c.textContent)));
+  }
+
   // ── Калькулятор цены участия ────────────────────
   function calcPanel(l) {
     if (!l.amount) return "";
@@ -414,14 +494,18 @@
       if (!cost) { out.innerHTML = `<dt>Введите себестоимость</dt><dd></dd>`; return; }
       const drop = l.amount ? (1 - price / l.amount) * 100 : 0;
       const over = price > l.amount;
+      const mk = state.market && state.market.price;
+      const mkRows = mk ? `<dt class="sep">Цена по рынку</dt><dd class="sep">${esc(money(mk.recommended))}</dd>
+        <dt>Прибыль по рынку</dt><dd class="${mk.recommended < cost ? "bad" : ""}">${esc(money(mk.recommended - cost))}</dd>
+        <dt>Относительно рынка</dt><dd class="${price > mk.range[1] ? "bad" : ""}">${price > mk.range[1] ? "выше цен победителей" : price < mk.range[0] ? "ниже рынка" : "в диапазоне победителей"}</dd>` : "";
       out.innerHTML = `
         <dt>Ваша цена</dt><dd class="${over ? "bad" : ""}">${esc(money(price))}</dd>
-        <dt>Снижение от суммы закупки</dt><dd class="${over ? "bad" : ""}">${over ? "выше суммы закупки" : drop.toFixed(1) + "%"}</dd>
+        <dt>Снижение</dt><dd class="${over ? "bad" : ""}">${over ? "выше суммы закупки" : drop.toFixed(1) + "%"}</dd>
         <dt>Прибыль</dt><dd>${esc(money(price - cost))}</dd>
         <dt>Обеспечение заявки</dt><dd>${esc(money(l.amount * num(vals.bid) / 100))}</dd>
-        <dt>Обеспечение договора</dt><dd>${esc(money(price * num(vals.contract) / 100))}</dd>`;
+        <dt>Обеспечение договора</dt><dd>${esc(money(price * num(vals.contract) / 100))}</dd>${mkRows}`;
     };
-    view.querySelectorAll("[data-c]").forEach((i) => i.addEventListener("input", calc));
+    view.querySelectorAll("[data-c]").forEach((i) => { i.oninput = calc; });
     calc();
   }
 

@@ -5,10 +5,12 @@
 """
 from __future__ import annotations
 
+import hashlib
+import random
 from datetime import datetime, timedelta
 
 from app import config
-from app.sources.base import LotData
+from app.sources.base import AwardData, LotData
 
 # (название, описание, заказчик, сумма ₸, регион, способ, дней до дедлайна)
 DEMO = [
@@ -37,6 +39,62 @@ DEMO = [
 ]
 
 
+# Вымышленные поставщики-конкуренты по направлениям
+WINNERS = {
+    "build": ["ТОО «КровСтрой-Актобе»", "ТОО «Батыс Құрылыс»", "ТОО «Альянс Ремонт»", "ТОО «Евразия Строй Сервис»",
+              "ТОО «Нур Құрылыс 2010»", "ИП «Сейткали Б.»"],
+    "goods": ["ТОО «Офис Трейд KZ»", "ТОО «Канцлер Азия»", "ИП «Жумабаев Е.»", "ТОО «Мега Снаб»", "ТОО «Paper Line»"],
+    "service": ["ТОО «Сервис Плюс»", "ТОО «Clean Pro Kazakhstan»", "ТОО «Digital Steppe»", "ИП «Ахметова А.»", "ТОО «Гарант Сервис»"],
+    "food": ["ТОО «Дастархан Фуд»", "ТОО «Таза Ас»", "ИП «Каримов Д.»"],
+    "road": ["ТОО «ЖолСтрой»", "ТОО «Каспий Жол»", "АО «Мангистау Дорстрой»"],
+}
+# Типичное снижение цены по направлениям: (среднее, разброс)
+DISCOUNT = {"build": (0.11, 0.06), "goods": (0.19, 0.08), "service": (0.07, 0.05), "food": (0.05, 0.03), "road": (0.09, 0.04)}
+
+
+def category(title: str) -> str:
+    t = title.lower()
+    if "дорог" in t:
+        return "road"
+    if any(w in t for w in ("ремонт", "монтаж", "благоустр", "фасад", "кровл")):
+        return "build"
+    if "питан" in t or "продукт" in t:
+        return "food"
+    if any(w in t for w in ("услуг", "обслуж", "разработ", "обучен", "smm", "уборк")):
+        return "service"
+    return "goods"
+
+
+def fake_bin(name: str) -> str:
+    return "9" + str(int(hashlib.md5(name.encode()).hexdigest(), 16))[:11]
+
+
+def demo_awards(now: datetime) -> list[AwardData]:
+    """Итоги прошлых закупок: те же заказчики и похожие предметы. Детерминированно (seed)."""
+    rnd = random.Random(2026)
+    other_customers = sorted({c for _, _, c, *_ in DEMO})
+    out: list[AwardData] = []
+    for i, (title, _desc, customer, amount, region, method, _d) in enumerate(DEMO, 1):
+        cat = category(title)
+        mean, spread = DISCOUNT[cat]
+        for j in range(9):
+            same_customer = j < 3
+            cust = customer if same_customer else rnd.choice(other_customers)
+            planned = amount * rnd.uniform(0.6, 1.3)
+            participants = max(1, round(rnd.gauss(4.5 if cat != "service" else 3.5, 1.6)))
+            failed = participants == 1 and rnd.random() < 0.5
+            disc = 0.0 if participants == 1 else max(0.005, min(0.45, rnd.gauss(mean + 0.012 * participants, spread)))
+            winner = "" if failed else rnd.choice(WINNERS[cat])
+            out.append(AwardData(
+                source="demo", ext_id=f"a{i}-{j}", title=title if j % 3 else f"{title} (повторная закупка)",
+                customer=cust, customer_bin=fake_bin(cust), region=region, method=method,
+                amount=round(planned, -3), price=None if failed else round(planned * (1 - disc), -3),
+                winner=winner, winner_bin=fake_bin(winner) if winner else "", participants=participants,
+                status="failed" if failed else "done", awarded_at=now - timedelta(days=rnd.randint(20, 700)), is_demo=True,
+            ))
+    return out
+
+
 class DemoSource:
     name = "demo"
 
@@ -55,6 +113,11 @@ class DemoSource:
                 source="demo", ext_id=f"{day}-{i}", title=title, description=desc, customer=customer,
                 amount=float(amount), region=region, method=method,
                 deadline=(now + timedelta(days=days)).replace(hour=18),
-                published_at=now - timedelta(hours=i), url="", is_demo=True,
+                published_at=now - timedelta(hours=i), url="", is_demo=True, customer_bin=fake_bin(customer),
             ))
         return lots
+
+    async def fetch_awards(self) -> list[AwardData]:
+        if not self.enabled:
+            return []
+        return demo_awards(datetime.now(config.TZ).replace(hour=12, minute=0, second=0, microsecond=0))

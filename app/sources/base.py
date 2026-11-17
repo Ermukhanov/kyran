@@ -32,3 +32,23 @@ class Source(Protocol):
     def enabled(self) -> bool: ...
 
     async def fetch(self) -> list[LotData]: ...
+
+
+@dataclass
+class AwardData:
+    """Итог закупки (победитель, цена договора) — для аналитики рынка."""
+    source: str
+    ext_id: str
+    title: str
+    customer: str = ""
+    customer_bin: str = ""
+    region: str = ""
+    method: str = ""
+    amount: float | None = None
+    price: float | None = None
+    winner: str = ""
+    winner_bin: str = ""
+    participants: int | None = None
+    status: str = "done"
+    awarded_at: datetime | None = None
+    is_demo: bool = False

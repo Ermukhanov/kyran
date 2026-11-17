@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=12">
+  <link rel="stylesheet" href="/static/app.css?v=13">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -34,6 +34,7 @@
 
     <div class="main">
       <div id="demo-strip" class="notice" hidden>Демонстрационный режим: показаны вымышленные закупки. Реальные данные появятся после подключения портала госзакупок.</div>
+      <a id="plan-strip" class="notice notice-bad" href="#profile/plan" hidden></a>
       <main id="view" class="view" aria-live="polite"></main>
     </div>
   </div>
@@ -47,6 +48,6 @@
   </nav>
 
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>

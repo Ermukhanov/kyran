@@ -457,7 +457,7 @@ async def collect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.info("Новых лотов: %d, подборок для %d пользователей", len(new), len(matches))
         for user_id, ms in matches.items():
             user = await s.get(User, user_id)
-            if not user or not user.notify:
+            if not user or not user.notify or not billing.current_plan(user)[1]:
                 continue
             urgent_until = utcnow() + timedelta(days=config.URGENT_DAYS)
             sent = 0
@@ -475,6 +475,8 @@ async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     async with db.Session() as s:
         users = (await s.execute(select(User).where(User.onboarded.is_(True), User.notify.is_(True)))).scalars().all()
         for user in users:
+            if not billing.current_plan(user)[1]:
+                continue
             rows = (await s.execute(
                 select(Lot, Match).join(Match, and_(Match.lot_id == Lot.id, Match.user_id == user.id))
                 .where(Match.notified.is_(False), Match.hidden.is_(False), core.open_condition())
@@ -531,6 +533,21 @@ async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             elif left <= timedelta(days=3) and not p.reminded_3d:
                 p.reminded_3d = True
                 msgs.append((p.user_id, f"До окончания приёма заявок осталось меньше 3 дней:\n{T.card(lot)}", lot_buttons(lot)))
+        # Тариф: за 2 дня до окончания и в день окончания
+        for user in (await s.execute(select(User).where(User.onboarded.is_(True)))).scalars().all():
+            plan, active, until = billing.current_plan(user, now)
+            if until is None:
+                continue
+            stamp = aware(until).astimezone(config.TZ).strftime("%d.%m.%Y")
+            what = "пробный период" if plan.code == "trial" else f"тариф «{plan.name}»"
+            if not active and user.plan_notice != f"expired:{stamp}":
+                user.plan_notice = f"expired:{stamp}"
+                msgs.append((user.id, f"{what.capitalize()} закончился {stamp}. Подборка, уведомления и ИИ-разборы приостановлены — "
+                                      "данные и документы сохранены. Выберите тариф, чтобы продолжить.", open_app_markup("Выбрать тариф")))
+            elif active and until - now <= timedelta(days=2) and not user.plan_notice.startswith(("soon:" + stamp, "expired:" + stamp)):
+                user.plan_notice = f"soon:{stamp}"
+                msgs.append((user.id, f"{what.capitalize()} заканчивается {stamp}. Чтобы подборка и напоминания не остановились, "
+                                      "выберите тариф в разделе «Профиль → Тариф».", open_app_markup("Выбрать тариф")))
         docs = (await s.execute(select(Document).where(Document.expires_at.is_not(None)))).scalars().all()
         for d in docs:
             left = aware(d.expires_at) - now

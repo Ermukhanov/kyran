@@ -73,6 +73,13 @@ async def collect(s: AsyncSession, sources: list[Source]) -> list[Lot]:
             new += await upsert_lots(s, await src.fetch())
         except Exception:
             log.exception("Источник %s упал", src.name)
+        if hasattr(src, "fetch_awards"):
+            try:
+                from app.services.insights import upsert_awards
+
+                await upsert_awards(s, await src.fetch_awards())
+            except Exception:
+                log.exception("Итоги закупок из %s не загрузились", src.name)
     await s.commit()
     return new
 

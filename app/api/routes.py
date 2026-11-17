@@ -14,7 +14,7 @@ from app.ai import client as ai
 from app.api.auth import current_tg_user
 from app.db import DOC_KINDS, STAGES, Analysis, Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
 from app import runtime
-from app.services import billing, documents as docsvc, login
+from app.services import billing, documents as docsvc, insights, login
 from app.services import core, monitors
 from app.services.analyses import get_analysis, get_or_create_analysis
 from app.services.matcher import parse_keywords
@@ -40,6 +40,13 @@ async def get_user(tg: dict = Depends(current_tg_user), s: AsyncSession = Depend
 @router.get("/auth/config")
 async def auth_config():
     return {"bot": runtime.bot_username}
+
+
+@router.get("/plans")
+async def public_plans():
+    return {"trial_days": billing.TRIAL_DAYS, "bot": runtime.bot_username, "plans": [
+        {"code": p.code, "name": p.name, "price": p.price, "features": list(p.features)} for p in billing.PLANS.values() if p.code in billing.PAID
+    ]}
 
 
 @router.post("/auth/start")
@@ -267,6 +274,30 @@ async def list_analyses(u: User = Depends(get_user), s: AsyncSession = Depends(g
         {"lot": lot_json(l), "verdict": a.verdict, "score": a.data.get("score"), "summary": a.data.get("summary", ""),
          "created_at": aware(a.created_at).isoformat()} for a, l in rows
     ]}
+
+
+class AskIn(BaseModel):
+    question: str = Field(min_length=2, max_length=1000)
+    history: list[dict] = Field(default_factory=list)
+
+
+@router.post("/lots/{lot_id}/ask")
+async def lot_ask(lot_id: int, body: AskIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    from app.ai import analysis as ai_analysis
+
+    lot = await _lot_or_404(s, lot_id)
+    a = await get_analysis(s, u, lot_id)
+    try:
+        answer = await ai_analysis.ask(u, lot, body.question, a.data if a else None, body.history)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    return {"answer": answer}
+
+
+@router.get("/lots/{lot_id}/insights")
+async def lot_insights(lot_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    lot = await _lot_or_404(s, lot_id)
+    return await insights.lot_insights(s, lot)
 
 
 @router.get("/lots/{lot_id}/readiness")

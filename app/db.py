@@ -51,6 +51,8 @@ class User(Base):
     plan_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Увеличение номера разлогинивает все устройства
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Какое уведомление о тарифе уже отправлено: "", "soon:<дата>", "expired:<дата>"
+    plan_notice: Mapped[str] = mapped_column(String(40), default="", server_default="")
 
 
 class Lot(Base):
@@ -153,6 +155,29 @@ DOC_KINDS = {
     "guarantee": "Банковская гарантия / обеспечение",
     "other": "Прочее",
 }
+
+
+class Award(Base):
+    """Итог прошедшей закупки: кто выиграл и за сколько. Основа аналитики цен и конкурентов."""
+    __tablename__ = "awards"
+    __table_args__ = (UniqueConstraint("source", "ext_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(30))
+    ext_id: Mapped[str] = mapped_column(String(120))
+    title: Mapped[str] = mapped_column(Text)
+    customer: Mapped[str] = mapped_column(String(500), default="")
+    customer_bin: Mapped[str] = mapped_column(String(12), default="", index=True)
+    region: Mapped[str] = mapped_column(String(200), default="")
+    method: Mapped[str] = mapped_column(String(200), default="")
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)   # плановая сумма
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)    # цена договора
+    winner: Mapped[str] = mapped_column(String(500), default="")
+    winner_bin: Mapped[str] = mapped_column(String(12), default="")
+    participants: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="done")   # done / failed (не состоялась)
+    awarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Document(Base):

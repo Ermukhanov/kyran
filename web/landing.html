@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#FFFFFF">
+  <title>Kyran — подбор и подготовка к госзакупкам Казахстана</title>
+  <meta name="description" content="Kyran находит подходящие закупки на goszakup.gov.kz, показывает, по какой цене их выигрывают, проверяет документы компании и напоминает о сроках в Telegram.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/landing.css?v=1">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-in">
+      <a class="brand" href="/" aria-label="Kyran">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M1 10.5c5.5-.4 9.6 1.8 13 5.6l.6-2.3c.3-1 .8-1.5 1.4-1.5s1.1.5 1.4 1.5l.6 2.3c3.4-3.8 7.5-6 13-5.6-4.6 1.6-8.2 4.6-10.6 8.8L18 23.5l-2 3-2-3-1.4-4.2C10.2 15.1 5.6 12.1 1 10.5z" fill="currentColor"/></svg>
+        Kyran
+      </a>
+      <nav class="top-nav" aria-label="Разделы">
+        <a href="#how">Как работает</a>
+        <a href="#price">Тарифы</a>
+        <a href="#faq">Вопросы</a>
+      </nav>
+      <a class="btn" href="/app">Войти</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-in">
+        <div class="hero-text">
+          <h1>Участвуйте только в тех закупках, которые можно выиграть</h1>
+          <p class="lead">Kyran каждый час просматривает госзакупки Казахстана, отбирает подходящие вашей компании и показывает, по какой цене их обычно выигрывают и кто ваши конкуренты. Документы и сроки под контролем, уведомления — в Telegram.</p>
+          <div class="cta">
+            <a class="btn btn-primary btn-lg" href="/app" id="cta-main">Попробовать 14 дней бесплатно</a>
+            <a class="btn btn-lg" href="#" id="cta-bot" target="_blank" rel="noopener" hidden>Открыть бота в Telegram</a>
+          </div>
+          <p class="small">Без пароля и без карты: вход через Telegram за минуту.</p>
+        </div>
+        <figure class="hero-shot">
+          <img src="/static/img/app-lot.png" alt="Карточка закупки в Kyran: сумма, срок подачи, рекомендуемая цена, готовность документов" width="1134" height="820">
+        </figure>
+      </div>
+    </section>
+
+    <section class="pains">
+      <div class="wrap">
+        <h2>На чём теряют деньги поставщики</h2>
+        <div class="pain-grid">
+          <div><h3>Пропущенная закупка</h3><p>Подходящий лот вышел в пятницу вечером, а заметили его, когда приём заявок уже закрылся.</p><p class="fix">Kyran присылает подходящие закупки в Telegram сразу после публикации и отдельно — срочные.</p></div>
+          <div><h3>Цена наугад</h3><p>Снизили слишком мало — проиграли. Слишком много — выиграли себе в убыток.</p><p class="fix">Kyran показывает, на сколько снижали цену в похожих закупках и кто их выигрывал.</p></div>
+          <div><h3>Отклонённая заявка</h3><p>Просроченная справка или забытый сертификат — и неделя подготовки впустую.</p><p class="fix">Kyran сверяет требования закупки с вашей библиотекой документов и следит за сроками их действия.</p></div>
+          <div><h3>Часы на чтение документации</h3><p>Техспецификация, проект договора, квалификационные требования — десятки страниц на каждый лот.</p><p class="fix">ИИ-разбор за минуту: объём работ, требования, риски, штрафы и вопросы заказчику.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="how" id="how">
+      <div class="wrap">
+        <h2>Как работает</h2>
+        <ol class="steps">
+          <li><b>Укажите направления</b><span>Например: «ремонт кровли, фасадные работы». Добавьте БИН и регионы — подбор станет точнее.</span></li>
+          <li><b>Получайте подборку</b><span>Каждая закупка с оценкой совпадения, сроком подачи и рыночной ценой. Срочные — сразу в Telegram.</span></li>
+          <li><b>Решайте и готовьтесь</b><span>ИИ-разбор, готовность документов, расчёт цены и обеспечения. Закупка в работе — Kyran напомнит о сроке за 3 дня и за сутки.</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="wrap feat-grid">
+        <div class="feat-big">
+          <h2>Цена, по которой выигрывают</h2>
+          <p>По каждой закупке — история похожих: сколько было участников, на сколько снижали цену, кто победил. Отдельно — история заказчика: есть ли у него постоянный поставщик и сколько его закупок не состоялось.</p>
+          <ul class="ticks">
+            <li>Медианное снижение и диапазон цен победителей</li>
+            <li>Топ конкурентов по похожим закупкам</li>
+            <li>Расчёт прибыли по вашей себестоимости</li>
+          </ul>
+        </div>
+        <div class="feat-list">
+          <div><h3>Документы компании</h3><p>Справки, лицензии, сертификаты, акты — в одном месте. Напоминания за 30 и 7 дней до окончания срока.</p></div>
+          <div><h3>Готовность к заявке</h3><p>Список документов закупки рядом с вашими: что есть, что просрочено, чего не хватает.</p></div>
+          <div><h3>Вопросы по документации</h3><p>«Есть ли аванс?», «Какие штрафы?» — ответ с указанием документа.</p></div>
+          <div><h3>Воронка заявок</h3><p>От «интересно» до «победа»: суммы, сроки и заметки по каждой закупке.</p></div>
+          <div><h3>Сайты заказчиков</h3><p>Отслеживание страниц закупок, у которых нет API: Kyran напишет, когда там появится новое.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="price" id="price">
+      <div class="wrap">
+        <h2>Тарифы</h2>
+        <p class="sub">14 дней бесплатно на любом тарифе. Оплата по счёту для ТОО и ИП или через Kaspi. При оплате за год — 2 месяца в подарок.</p>
+        <div class="plans" id="plans"></div>
+      </div>
+    </section>
+
+    <section class="faq" id="faq">
+      <div class="wrap faq-in">
+        <h2>Вопросы</h2>
+        <div>
+          <details><summary>Откуда данные о закупках?</summary><p>С портала государственных закупок goszakup.gov.kz через официальный API. Подключение других площадок — в работе.</p></details>
+          <details><summary>Kyran подаёт заявки за меня?</summary><p>Нет. Заявка подаётся на портале с вашей ЭЦП. Kyran помогает выбрать закупку, подготовиться и не пропустить сроки.</p></details>
+          <details><summary>Насколько точен ИИ-разбор?</summary><p>Разбор ссылается на документы закупки, но носит справочный характер. Перед подачей сверяйте требования с первоисточником.</p></details>
+          <details><summary>Где хранятся мои документы?</summary><p>В защищённой базе Kyran, доступ — только у вашего аккаунта. Вход без пароля, через подтверждение в Telegram. Можно завершить все сессии одной кнопкой.</p></details>
+          <details><summary>Что будет после пробного периода?</summary><p>Уведомления в Telegram, ИИ-разборы и загрузка документов приостановятся, пока вы не выберете тариф. Данные и документы сохранятся.</p></details>
+        </div>
+      </div>
+    </section>
+
+    <section class="final">
+      <div class="wrap final-in">
+        <h2>Начните с подборки под вашу компанию</h2>
+        <a class="btn btn-primary btn-lg" href="/app">Попробовать бесплатно</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <span>Kyran · Казахстан</span>
+      <span>Kyran не является государственным сервисом и не связан с порталом госзакупок.</span>
+    </div>
+  </footer>
+
+  <script>
+    fetch("/api/plans").then((r) => r.json()).then((d) => {
+      const fmt = (n) => n.toLocaleString("ru-RU");
+      const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      document.getElementById("plans").innerHTML = d.plans.map((p) => `
+        <div class="plan ${p.code === "pro" ? "featured" : ""}">
+          ${p.code === "pro" ? '<span class="flag">Выбор большинства</span>' : ""}
+          <h3>${esc(p.name)}</h3>
+          <div class="amount">${fmt(p.price)} ₸<small>/мес</small></div>
+          <ul>${p.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
+          <a class="btn ${p.code === "pro" ? "btn-primary" : ""}" href="/app">Начать бесплатно</a>
+        </div>`).join("");
+      if (d.bot) { const b = document.getElementById("cta-bot"); b.href = "https://t.me/" + d.bot; b.hidden = false; }
+    }).catch(() => {});
+  </script>
+</body>
+</html>

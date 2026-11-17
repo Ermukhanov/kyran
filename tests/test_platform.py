@@ -19,6 +19,13 @@ def client(tmp_path, monkeypatch):
 
     with TestClient(app) as c:
         c.headers["Authorization"] = "Bearer " + make_link_token(2002)
+        import time
+
+        for _ in range(100):  # дождаться первого сбора, чтобы фоновая задача не писала в базу во время теста
+            if c.get("/api/search?q=ремонт").json()["items"]:
+                break
+            time.sleep(0.1)
+        time.sleep(0.3)
         yield c
 
 
@@ -129,3 +136,44 @@ def test_migration_adds_columns(tmp_path):
     assert {"plan", "plan_until", "token_version", "company_bin", "keywords"} <= cols
     row = sqlite3.connect(path).execute("SELECT plan, token_version FROM users WHERE id=1").fetchone()
     assert row == ("trial", 0)
+
+
+def test_market_insights_and_ask(client):
+    import time
+
+    for _ in range(50):
+        items = client.get("/api/search?q=кровли").json()["items"]
+        if items:
+            break
+        time.sleep(0.1)
+    lot_id = items[0]["id"]
+    r = client.get(f"/api/lots/{lot_id}/insights").json()
+    assert r["available"] and r["similar_count"] >= 5
+    p = r["price"]
+    assert 0 < p["median_discount"] < 50 and p["range"][0] <= p["recommended"] <= p["range"][1]
+    assert r["competitors"] and r["customer"]["total"] >= 3 and sum(r["histogram"]["counts"]) > 0
+    # без ключа ИИ — понятный отказ
+    a = client.post(f"/api/lots/{lot_id}/ask", json={"question": "Есть ли аванс?"})
+    assert a.status_code == 503 and "ANTHROPIC_API_KEY" in a.json()["detail"]
+
+
+def test_landing_and_public_plans(client):
+    html = client.get("/", headers={"Authorization": ""}).text
+    assert "Kyran" in html and "/api/plans" in html
+    plans = client.get("/api/plans", headers={"Authorization": ""}).json()
+    assert [p["code"] for p in plans["plans"]] == ["start", "pro", "team"] and plans["bot"] == "kyran_test_bot"
+
+
+def test_expired_plan_blocks_analysis(client, tmp_path):
+    import sqlite3
+
+    client.get("/api/me")  # создаёт пользователя
+    con = sqlite3.connect(tmp_path / "p.db", timeout=10)
+    con.execute("UPDATE users SET plan='start', plan_until='2020-01-01 00:00:00.000000' WHERE id=2002")
+    con.commit()
+    con.close()
+    me = client.get("/api/me").json()
+    assert me["plan"]["active"] is False
+    lot_id = client.get("/api/search?q=ремонт").json()["items"][0]["id"]
+    r = client.post(f"/api/lots/{lot_id}/analyze")
+    assert r.status_code == 402 and "истёк" in r.json()["detail"]

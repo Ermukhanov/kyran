@@ -64,6 +64,10 @@ async def lifespan(_: FastAPI):
             await bot_app.shutdown()
         if task:
             task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
 
 
 app = FastAPI(title="Kyran", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -73,7 +77,7 @@ app.mount("/static", StaticFiles(directory=WEB), name="static")
 
 @app.get("/")
 async def root():
-    return RedirectResponse("/app")
+    return FileResponse(WEB / "landing.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/app")
