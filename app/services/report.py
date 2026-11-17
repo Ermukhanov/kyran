@@ -33,10 +33,11 @@ async def weekly(s: AsyncSession, user: User, days: int = 7) -> dict:
         elif a.status == "done" and a.price:
             missed.append(a)
 
-    winners: dict[str, dict] = defaultdict(lambda: {"wins": 0, "total": 0.0})
+    winners: dict[str, dict] = defaultdict(lambda: {"wins": 0, "total": 0.0, "bin": ""})
     discounts = []
     for a in missed:
         w = winners[a.winner or "—"]
+        w["bin"] = w["bin"] or a.winner_bin
         w["wins"] += 1
         w["total"] += a.price or 0
         if a.amount and a.price:

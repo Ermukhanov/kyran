@@ -14,7 +14,7 @@ from app.ai import client as ai
 from app.api.auth import current_tg_user
 from app.db import DOC_KINDS, STAGES, Analysis, Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
 from app import runtime
-from app.services import billing, docgen, documents as docsvc, insights, login, report
+from app.services import billing, competitors as rivals, docgen, documents as docsvc, insights, login, report
 from app.db import GeneratedDoc
 from app.services import core, monitors
 from app.services.analyses import get_analysis, get_or_create_analysis
@@ -273,6 +273,45 @@ async def delete_monitor(monitor_id: int, u: User = Depends(get_user), s: AsyncS
     m.active = False
     await s.commit()
     return {"ok": True}
+
+
+# ── Конкуренты ─────────────────────────────────────────────
+
+@router.get("/competitors")
+async def competitors_list(u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    return {"items": await rivals.list_for(s, u), "suggest": await rivals.suggest(s, u)}
+
+
+class FollowIn(BaseModel):
+    bin: str = Field(max_length=20)
+    name: str = Field(default="", max_length=500)
+
+
+@router.post("/competitors")
+async def competitors_follow(body: FollowIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    try:
+        c = await rivals.follow(s, u, body.bin, body.name)
+    except rivals.CompetitorError as e:
+        raise HTTPException(400, str(e))
+    return {"bin": c.bin, "name": c.name}
+
+
+@router.delete("/competitors/{bin_}")
+async def competitors_unfollow(bin_: str, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    return {"ok": await rivals.unfollow(s, u, bin_)}
+
+
+@router.get("/competitors/{bin_}")
+async def competitors_dossier(bin_: str, days: int = 365, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    try:
+        b = rivals.clean_bin(bin_)
+    except rivals.CompetitorError as e:
+        raise HTTPException(400, str(e))
+    d = await rivals.dossier(s, u, b, days=max(30, min(days, 1095)))
+    from app.db import Competitor
+
+    d["following"] = bool((await s.execute(select(Competitor.id).where(Competitor.user_id == u.id, Competitor.bin == b))).first())
+    return d
 
 
 @router.get("/report/weekly")

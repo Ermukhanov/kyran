@@ -241,3 +241,44 @@ def test_weekly_report(client):
 
     text = T.weekly_report(r)
     assert "Мимо вас прошло" in text and len(text) < 4096
+
+
+def test_competitors(client):
+    client.put("/api/me", json={"keywords": ["ремонт кровли", "ремонт", "мебель"], "company_bin": "111111111111"})
+    data = client.get("/api/competitors").json()
+    assert data["items"] == [] and data["suggest"]
+    top = data["suggest"][0]
+    assert len(top["bin"]) == 12 and top["wins"] > 0
+
+    assert client.post("/api/competitors", json={"bin": "123"}).status_code == 400
+    assert client.post("/api/competitors", json={"bin": "111111111111"}).status_code == 400  # свой БИН
+    r = client.post("/api/competitors", json={"bin": top["bin"]})
+    assert r.status_code == 200 and r.json()["name"] == top["name"]
+    items = client.get("/api/competitors").json()["items"]
+    assert len(items) == 1 and items[0]["wins"] >= 1
+
+    d = client.get(f"/api/competitors/{top['bin']}").json()
+    assert d["following"] and d["wins"] >= 1 and len(d["months"]) == 12 and d["recent"]
+    assert d["overlap"]["wins"] >= 1
+
+    # Новые победы: добавим итог с этим БИН — new_wins его найдёт, повторно — нет
+    async def add_and_check():
+        from app.db import Award
+        from app.services import competitors as rivals
+
+        async with db.Session() as s:
+            s.add(Award(source="test", ext_id="x1", title="Ремонт кровли спортзала", winner=top["name"], winner_bin=top["bin"],
+                        amount=10_000_000, price=9_000_000, status="done", awarded_at=utcnow()))
+            await s.commit()
+            first = await rivals.new_wins(s)
+            second = await rivals.new_wins(s)
+        return first, second
+    first, second = asyncio.run(add_and_check())
+    assert len(first) == 1 and first[0][2][0].title == "Ремонт кровли спортзала" and second == []
+
+    # Лимит тарифа (пробный: 5)
+    for b in ("900000000001", "900000000002", "900000000003", "900000000004"):
+        assert client.post("/api/competitors", json={"bin": b}).status_code == 200
+    r = client.post("/api/competitors", json={"bin": "900000000005"})
+    assert r.status_code == 400 and "лимит" in r.json()["detail"]
+    assert client.delete(f"/api/competitors/{top['bin']}").json() == {"ok": True}

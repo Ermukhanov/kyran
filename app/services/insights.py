@@ -97,16 +97,17 @@ async def lot_insights(s: AsyncSession, lot: Lot, *, min_sim: float = 0.5) -> di
     parts = [a.participants for a in similar if a.participants]
     failed = sum(1 for a in similar if a.status == "failed")
 
-    wins: dict[str, dict] = defaultdict(lambda: {"wins": 0, "total": 0.0, "discounts": []})
+    wins: dict[str, dict] = defaultdict(lambda: {"wins": 0, "total": 0.0, "discounts": [], "bin": ""})
     for a in similar:
         if a.status == "done" and a.winner:
             w = wins[a.winner]
+            w["bin"] = w["bin"] or a.winner_bin
             w["wins"] += 1
             w["total"] += a.price or 0
             if (d := _discount(a)) is not None:
                 w["discounts"].append(d)
     competitors = sorted(
-        ({"name": k, "wins": v["wins"], "total": v["total"],
+        ({"name": k, "bin": v["bin"], "wins": v["wins"], "total": v["total"],
           "avg_discount": round(sum(v["discounts"]) / len(v["discounts"]) * 100, 1) if v["discounts"] else None}
          for k, v in wins.items()),
         key=lambda x: (-x["wins"], -x["total"]))[:5]

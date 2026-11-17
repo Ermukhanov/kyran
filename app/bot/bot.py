@@ -20,7 +20,7 @@ from app.ai import agent, client as ai
 from app.api.auth import make_link_token
 from app.bot import texts as T
 from app.db import Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
-from app.services import billing, core, docgen, login, monitors, report, uploads
+from app.services import billing, competitors as rivals, core, docgen, login, monitors, report, uploads
 from app.services.matcher import parse_keywords
 from app.sources.registry import SOURCES
 
@@ -644,6 +644,83 @@ async def monitors_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("Уведомление о сайте не отправилось")
 
 
+# ── Конкуренты ─────────────────────────────────────────────
+
+async def follow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        async with db.Session() as s:
+            user = await core.get_or_create_user(s, update.effective_user.id)
+            sug = await rivals.suggest(s, user, limit=5)
+        text = ("Пришлите БИН конкурента: /follow 123456789012\n\n"
+                "Буду сообщать о каждой его победе: что выиграл, у кого и по какой цене.")
+        if sug:
+            text += "\n\n<b>Чаще всего в ваших направлениях выигрывают:</b>\n" + "\n".join(
+                f"• {T.escape(x['name'][:70])} — {x['wins']} шт., {T.money(x['total'], short=True)}\n  /follow {x['bin']}" for x in sug)
+        await reply(update, text)
+        return
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        try:
+            c = await rivals.follow(s, user, context.args[0], " ".join(context.args[1:]))
+        except rivals.CompetitorError as e:
+            await reply(update, T.escape(str(e)))
+            return
+        d = await rivals.dossier(s, user, c.bin)
+    name = T.escape(c.name or f"БИН {c.bin}")
+    await reply(update, f"Слежу за <b>{name}</b>.\nЗа год: {d['wins']} побед на {T.money(d['total'], short=True)}"
+                        f"{', снижение в среднем ' + str(d['median_discount']) + '%' if d['median_discount'] is not None else ''}.\n"
+                        "О новых победах напишу сразу. Список: /rivals",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Досье", web_app=WebAppInfo(app_url(f"#rival/{c.bin}")))]])
+                if config.PUBLIC_URL else None)
+
+
+async def rivals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        items = await rivals.list_for(s, user)
+    if not items:
+        await reply(update, "Вы пока ни за кем не следите. Добавить: /follow &lt;БИН&gt;")
+        return
+    lines = [f"<b>{T.escape(x['name'][:80])}</b> — {x['wins']} побед за год, {T.money(x['total'], short=True)}\n"
+             f"БИН {x['bin']} · убрать: /unfollow {x['bin']}" for x in items]
+    await reply(update, "<b>Конкуренты под наблюдением</b>\n\n" + "\n\n".join(lines))
+
+
+async def unfollow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await reply(update, "Укажите БИН: /unfollow 123456789012")
+        return
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        ok = await rivals.unfollow(s, user, context.args[0])
+    await reply(update, "Больше не слежу за этой компанией." if ok else "Такого конкурента в вашем списке нет.")
+
+
+async def rivals_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Новые победы отслеживаемых конкурентов → сообщение владельцу (только активный тариф)."""
+    async with db.Session() as s:
+        found = await rivals.new_wins(s)
+        active = {}
+        for uid, _, _ in found:
+            if uid not in active:
+                u = await s.get(User, uid)
+                active[uid] = bool(u and u.notify and billing.current_plan(u)[1])
+    for uid, c, wins in found:
+        if not active.get(uid):
+            continue
+        items = "\n".join(
+            f"• {T.escape(a.title[:110])}\n  {T.escape((a.customer or '')[:80])} — {T.money(a.price, short=True)}"
+            f"{' (−' + str(round((1 - a.price / a.amount) * 100, 1)) + '%)' if a.amount and a.price else ''}"
+            f"{', участников: ' + str(a.participants) if a.participants else ''}" for a in wins[:5])
+        more = f"\nи ещё {len(wins) - 5}" if len(wins) > 5 else ""
+        text = f"Конкурент <b>{T.escape(c.name or c.bin)}</b> выиграл {len(wins)} {'закупку' if len(wins) == 1 else 'закупки' if len(wins) < 5 else 'закупок'}:\n{items}{more}"
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("Досье", web_app=WebAppInfo(app_url(f"#rival/{c.bin}")))]]) if config.PUBLIC_URL else None
+        try:
+            await context.bot.send_message(uid, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW, reply_markup=markup)
+        except Exception:
+            log.exception("Уведомление о конкуренте не отправилось %s", uid)
+
+
 async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with db.Session() as s:
         user = await core.get_or_create_user(s, update.effective_user.id)
@@ -744,7 +821,7 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         ("app", "Открыть Kyran"), ("find", "Лучшие тендеры сейчас"), ("urgent", "Срочные"),
         ("profile", "Мой профиль"), ("sites", "Сайты под наблюдением"), ("watch", "Следить за сайтом"),
-        ("report", "Итоги недели"), ("plan", "Мой тариф"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
+        ("report", "Итоги недели"), ("rivals", "Конкуренты"), ("follow", "Следить за конкурентом"), ("plan", "Мой тариф"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
     ])
 
 
@@ -766,7 +843,8 @@ def build() -> Application:
     for name, fn in [("app", app_cmd), ("web", web_cmd), ("find", find_cmd), ("urgent", urgent_cmd), ("profile", profile_cmd),
                      ("stop", stop_cmd), ("resume", resume_cmd), ("help", help_cmd), ("stats", stats_cmd),
                      ("logout_all", logout_all_cmd), ("plan", plan_cmd), ("grant", grant_cmd),
-                     ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd), ("report", report_cmd)]:
+                     ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd), ("report", report_cmd),
+                     ("follow", follow_cmd), ("rivals", rivals_cmd), ("unfollow", unfollow_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
     application.add_handler(CallbackQueryHandler(on_generate_button, pattern=r"^gen:(tech|clarify|cover|inventory|experience):\d+$"))
@@ -778,5 +856,6 @@ def build() -> Application:
     jq.run_repeating(monitors_job, interval=config.WEBSITE_EVERY_MIN * 60, first=120)
     jq.run_daily(digest_job, time=dtime(hour=config.DIGEST_HOUR, tzinfo=config.TZ))
     jq.run_repeating(reminders_job, interval=3600, first=60)
+    jq.run_repeating(rivals_job, interval=config.COLLECT_EVERY_MIN * 60, first=180)
     jq.run_daily(weekly_report_job, time=dtime(hour=10, tzinfo=config.TZ), days=(1,))  # понедельник
     return application

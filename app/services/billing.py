@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import config
-from app.db import Analysis, Document, GeneratedDoc, User, aware, utcnow
+from app.db import Analysis, Competitor, Document, GeneratedDoc, User, aware, utcnow
 
 TRIAL_DAYS = 14
 
@@ -23,20 +23,22 @@ class Plan:
     seats: int            # пользователей
     features: tuple[str, ...]
     generations: int = 20  # документов заявки, подготовленных ИИ, в месяц
+    competitors: int = 3   # конкурентов под наблюдением
 
 
 PLANS: dict[str, Plan] = {
     "trial": Plan("trial", "Пробный период", 0, 10, 30, 1, (
-        "Все функции на 14 дней", "10 ИИ-разборов", "До 30 документов в библиотеке"), 10),
+        "Все функции на 14 дней", "10 ИИ-разборов", "До 30 документов в библиотеке"), 10, 5),
     "start": Plan("start", "Старт", 14_900, 10, 30, 1, (
         "Подбор закупок и уведомления в Telegram", "10 ИИ-разборов в месяц", "Библиотека до 30 документов",
-        "Документы заявки в Word: 20 в месяц", "Воронка, сроки и напоминания"), 20),
+        "Документы заявки в Word: 20 в месяц", "Слежка за 3 конкурентами", "Воронка, сроки и напоминания"), 20, 3),
     "pro": Plan("pro", "Профи", 29_900, 50, 200, 1, (
         "Всё из «Старт»", "50 ИИ-разборов в месяц", "Библиотека до 200 документов",
-        "Документы заявки в Word: 100 в месяц", "Готовность к заявке по каждой закупке", "Мониторинг сайтов заказчиков"), 100),
+        "Документы заявки в Word: 100 в месяц", "Слежка за 20 конкурентами", "Готовность к заявке по каждой закупке",
+        "Мониторинг сайтов заказчиков"), 100, 20),
     "team": Plan("team", "Команда", 69_900, 200, 1000, 5, (
         "Всё из «Профи»", "200 ИИ-разборов в месяц", "Документы заявки в Word: 400 в месяц", "До 5 сотрудников",
-        "Приоритетная поддержка"), 400),
+        "Слежка за 50 конкурентами", "Приоритетная поддержка"), 400, 50),
 }
 PAID = ("start", "pro", "team")
 
@@ -63,7 +65,8 @@ async def usage(s: AsyncSession, user: User) -> dict[str, int]:
     documents = (await s.execute(select(func.count(Document.id)).where(Document.user_id == user.id))).scalar() or 0
     generations = (await s.execute(select(func.count(GeneratedDoc.id)).where(
         GeneratedDoc.user_id == user.id, GeneratedDoc.by_ai.is_(True), GeneratedDoc.created_at >= month_start()))).scalar() or 0
-    return {"analyses": int(analyses), "documents": int(documents), "generations": int(generations)}
+    competitors = (await s.execute(select(func.count(Competitor.id)).where(Competitor.user_id == user.id))).scalar() or 0
+    return {"analyses": int(analyses), "documents": int(documents), "generations": int(generations), "competitors": int(competitors)}
 
 
 class LimitError(Exception):
@@ -75,10 +78,11 @@ async def check(s: AsyncSession, user: User, what: str) -> None:
     if not active:
         raise LimitError("Срок действия тарифа истёк. Продлите подписку в разделе «Профиль → Тариф».")
     used = await usage(s, user)
-    limit = {"analyses": plan.analyses, "documents": plan.documents, "generations": plan.generations}[what]
+    limit = {"analyses": plan.analyses, "documents": plan.documents, "generations": plan.generations,
+             "competitors": plan.competitors}[what]
     if used[what] >= limit:
         label = {"analyses": "ИИ-разборов в этом месяце", "documents": "документов в библиотеке",
-                 "generations": "документов заявки от ИИ в этом месяце"}[what]
+                 "generations": "документов заявки от ИИ в этом месяце", "competitors": "конкурентов под наблюдением"}[what]
         raise LimitError(f"Достигнут лимит тарифа «{plan.name}»: {limit} {label}. Перейдите на тариф выше.")
 
 
@@ -95,7 +99,8 @@ def plan_json(user: User, used: dict[str, int]) -> dict:
     plan, active, until = current_plan(user)
     return {
         "code": plan.code, "name": plan.name, "active": active, "until": until.isoformat() if until else None,
-        "limits": {"analyses": plan.analyses, "documents": plan.documents, "seats": plan.seats, "generations": plan.generations},
+        "limits": {"analyses": plan.analyses, "documents": plan.documents, "seats": plan.seats, "generations": plan.generations,
+                   "competitors": plan.competitors},
         "usage": used,
         "catalog": [
             {"code": p.code, "name": p.name, "price": p.price, "features": list(p.features)} for p in PLANS.values() if p.code in PAID

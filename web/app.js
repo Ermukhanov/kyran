@@ -506,7 +506,7 @@
       <div class="mkt-grid">
         <div><h3 class="mkt-h">Распределение снижения, %</h3><div class="hist">${hist}</div></div>
         <div><h3 class="mkt-h">Кто выигрывает похожие закупки</h3>
-          ${r.competitors.length ? `<table class="a-table mkt-table">${r.competitors.map((c) => `<tr><td>${esc(c.name)}</td><td class="right nowrap">${c.wins} ${plural(c.wins, "победа", "победы", "побед")}</td><td class="right nowrap cell-sub">${c.avg_discount ? "−" + c.avg_discount + "%" : c.avg_discount === 0 ? "без снижения" : ""}</td></tr>`).join("")}</table>` : `<p class="cell-sub">Нет данных</p>`}</div>
+          ${r.competitors.length ? `<table class="a-table mkt-table">${r.competitors.map((c) => `<tr><td>${c.bin ? `<a href="#rival/${esc(c.bin)}">${esc(c.name)}</a>` : esc(c.name)}</td><td class="right nowrap">${c.wins} ${plural(c.wins, "победа", "победы", "побед")}</td><td class="right nowrap cell-sub">${c.avg_discount ? "−" + c.avg_discount + "%" : c.avg_discount === 0 ? "без снижения" : ""}</td></tr>`).join("")}</table>` : `<p class="cell-sub">Нет данных</p>`}</div>
       </div>
       ${warn.length ? `<div class="mkt-warn">${warn.map((w) => `<p>${w}</p>`).join("")}</div>` : ""}
       ${cust.recent.length ? `<details class="mkt-more"><summary>История заказчика: ${cust.total} ${plural(cust.total, "закупка", "закупки", "закупок")}</summary>
@@ -655,6 +655,82 @@
   }
 
 
+
+  // ── Конкуренты ──────────────────────────────────
+  async function followBin(bin, name, btn) {
+    if (btn) btn.disabled = true;
+    try { await api("/competitors", { method: "POST", body: { bin, name: name || "" } }); haptic(); toast("Слежу за конкурентом — сообщу о новых победах"); return true; }
+    catch (e) { toast(e.message); if (btn) btn.disabled = false; if (e.message.includes("лимит")) location.hash = "#profile/plan"; return false; }
+  }
+
+  async function renderRivals() {
+    view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
+    const { items, suggest } = await api("/competitors");
+    const p = state.me.plan;
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Конкуренты</h1>
+        <p class="page-sub">Следите за компаниями, которые выигрывают в ваших направлениях: Kyran сообщит в Telegram о каждой их победе — что, у кого и по какой цене.</p></div></div>
+      <form class="toolbar" id="follow-form">
+        <input class="input" style="max-width:240px" name="bin" inputmode="numeric" maxlength="12" placeholder="БИН, 12 цифр" required aria-label="БИН конкурента">
+        <input class="input" style="flex:1;min-width:200px" name="name" maxlength="200" placeholder="Название (необязательно)" aria-label="Название">
+        <button class="btn btn-primary" type="submit">Следить</button>
+        <span class="hint" style="margin:0">${items.length} из ${p.limits.competitors} по тарифу</span>
+      </form>
+      ${items.length ? `<div class="rival-grid">${items.map((x) => `
+        <a class="rival" href="#rival/${x.bin}">
+          <div class="rival-top"><span class="avatar">${esc(initials({ company_name: x.name }))}</span><div><div class="cell-title">${esc(x.name)}</div><div class="cell-sub">БИН ${esc(x.bin)}</div></div></div>
+          <dl class="rival-stats"><div><dt>Побед за год</dt><dd>${x.wins}</dd></div><div><dt>Сумма</dt><dd>${esc(moneyShort(x.total))}</dd></div><div><dt>Последняя</dt><dd>${x.last_win ? esc(dateShort(x.last_win)) : "—"}</dd></div></dl>
+        </a>`).join("")}</div>`
+        : `<div class="empty"><h2>Вы пока ни за кем не следите</h2><p>Добавьте БИН конкурента или выберите из тех, кто чаще всего выигрывает в ваших направлениях.</p></div>`}
+      ${suggest.length ? `<section class="panel" style="margin-top:20px"><div class="panel-head"><h2>Чаще всего выигрывают в ваших направлениях</h2><span class="hint">за полгода</span></div>
+        <table class="grid stack"><tbody>${suggest.map((x) => `<tr><td><div class="cell-title">${esc(x.name)}</div><div class="cell-sub">БИН ${esc(x.bin)}</div></td>
+          <td class="right nowrap">${x.wins} ${plural(x.wins, "победа", "победы", "побед")}</td><td class="right nowrap"><span class="amount">${esc(moneyShort(x.total))}</span></td>
+          <td class="right nowrap"><a class="btn btn-sm" href="#rival/${x.bin}">Досье</a> <button class="btn btn-sm btn-primary" data-follow="${x.bin}" data-name="${esc(x.name)}">Следить</button></td></tr>`).join("")}</tbody></table></section>` : ""}`;
+    view.querySelector("#follow-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const bin = String(fd.get("bin")).replace(/\D/g, "");
+      if (bin.length !== 12) return toast("БИН — 12 цифр");
+      if (await followBin(bin, fd.get("name"))) renderRivals();
+    });
+    view.querySelectorAll("[data-follow]").forEach((b) => b.addEventListener("click", async () => { if (await followBin(b.dataset.follow, b.dataset.name, b)) renderRivals(); }));
+  }
+
+  async function renderRival(bin) {
+    view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
+    if (tg) { tg.BackButton.show(); tg.BackButton.onClick(goBack); }
+    const d = await api(`/competitors/${bin}`);
+    const maxM = Math.max(1, ...d.months.map((m) => m.total));
+    const MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+    const list = (arr) => arr.length ? `<ol class="rank">${arr.map((x) => `<li><span>${esc(x.name)}</span><b>${x.wins}</b></li>`).join("")}</ol>` : `<p class="cell-sub">Нет данных</p>`;
+    view.innerHTML = `
+      <div class="crumbs"><a href="#rivals">Конкуренты</a> / Досье</div>
+      <div class="page-head"><div class="profile-head" style="margin:0"><span class="avatar xl">${esc(initials({ company_name: d.name || "?" }))}</span>
+        <div><h1>${esc(d.name || "Компания")}</h1><p class="page-sub">БИН ${esc(d.bin)}${d.is_demo ? " · демонстрационные данные" : ""}</p></div></div>
+        <div>${d.following ? `<button class="btn" id="unfollow">Не следить</button>` : `<button class="btn btn-primary" id="follow">Следить</button>`}</div></div>
+      <section class="kpis">
+        <div class="kpi"><div class="kpi-label">Побед за год</div><div class="kpi-value">${d.wins}</div></div>
+        <div class="kpi"><div class="kpi-label">Сумма договоров</div><div class="kpi-value">${esc(moneyShort(d.total))}</div></div>
+        <div class="kpi"><div class="kpi-label">Снижение цены</div><div class="kpi-value">${d.median_discount != null ? d.median_discount + "%" : "—"}</div></div>
+        <div class="kpi"><div class="kpi-label">В ваших направлениях</div><div class="kpi-value ${d.overlap.wins ? "bad" : ""}">${d.overlap.wins}${d.overlap.total ? `<small> · ${esc(moneyShort(d.overlap.total))}</small>` : ""}</div></div>
+      </section>
+      <section class="panel"><div class="panel-head"><h2>Победы по месяцам</h2><span class="hint">сумма договоров</span></div><div class="panel-body">
+        <div class="months">${d.months.map((m) => { const [y, mo] = m.month.split("-"); return `<div class="mbar" title="${MON[+mo - 1]} ${y}: ${esc(money(m.total))}"><i style="--h:${(m.total / maxM) * 100}"></i><span>${MON[+mo - 1]}</span></div>`; }).join("")}</div>
+      </div></section>
+      <div class="report-grid" style="margin-top:16px">
+        <section class="panel"><div class="panel-head"><h2>Главные заказчики</h2></div><div class="panel-body">${list(d.customers)}</div></section>
+        <section class="panel"><div class="panel-head"><h2>Регионы</h2></div><div class="panel-body">${list(d.regions)}</div></section>
+      </div>
+      <section class="panel" style="margin-top:16px"><div class="panel-head"><h2>Последние победы</h2></div>
+        ${d.recent.length ? `<table class="grid stack"><thead><tr><th>Закупка</th><th>Дата</th><th class="right">Цена договора</th><th class="right">Снижение</th><th>Участников</th></tr></thead>
+          <tbody>${d.recent.map((a) => `<tr><td><div class="cell-title">${esc(a.title)}</div><div class="cell-sub">${esc(a.customer)}</div></td><td class="cell-sub">${esc(dateShort(a.date))}</td>
+            <td class="right"><span class="amount">${esc(money(a.price))}</span></td><td class="right">${a.discount != null ? a.discount + "%" : "—"}</td><td>${a.participants ?? "—"}</td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty"><p>За год побед этой компании в данных нет.</p></div>`}</section>`;
+    const f = view.querySelector("#follow"), u = view.querySelector("#unfollow");
+    if (f) f.addEventListener("click", async () => { if (await followBin(d.bin, d.name, f)) renderRival(bin); });
+    if (u) u.addEventListener("click", async () => { await api(`/competitors/${d.bin}`, { method: "DELETE" }); toast("Больше не следим"); renderRival(bin); });
+  }
+
   // ── Отчёт недели ────────────────────────────────
   async function renderReport() {
     view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
@@ -675,7 +751,7 @@
       </section>
       <div class="report-grid">
         <section class="panel"><div class="panel-head"><h2>Кто забирает ваши закупки</h2></div><div class="panel-body">
-          ${r.winners.length ? r.winners.map((w) => `<div class="wbar"><div class="wbar-top"><span>${esc(w.name)}</span><b>${esc(moneyShort(w.total))}</b></div>
+          ${r.winners.length ? r.winners.map((w) => `<div class="wbar"><div class="wbar-top"><span>${w.bin ? `<a href="#rival/${esc(w.bin)}">${esc(w.name)}</a>` : esc(w.name)}</span><b>${esc(moneyShort(w.total))}</b></div>
             <div class="wbar-line"><i style="--p:${(w.total / maxW) * 100}"></i></div><div class="cell-sub">${w.wins} ${plural(w.wins, "победа", "победы", "побед")}</div></div>`).join("")
             : `<p class="cell-sub">За период подходящих итогов нет.</p>`}
         </div></section>
@@ -1004,8 +1080,8 @@
 
   async function route() {
     const [page, arg] = (location.hash.slice(1) || "feed").split("/");
-    if (tg && page !== "lot") { tg.BackButton.hide(); tg.BackButton.offClick(goBack); }
-    const tab = page === "lot" || page === "report" ? "feed" : page;
+    if (tg && page !== "lot" && page !== "rival") { tg.BackButton.hide(); tg.BackButton.offClick(goBack); }
+    const tab = page === "lot" || page === "report" ? "feed" : page === "rival" ? "rivals" : page;
     document.body.classList.remove("auth"); clearInterval(pollTimer);
     document.querySelectorAll("[data-tab]").forEach((a) => (a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
     window.scrollTo(0, 0);
@@ -1016,6 +1092,8 @@
       if (page === "documents") return await renderDocuments();
       if (page === "analyses") return await renderAnalyses();
       if (page === "report") return await renderReport();
+      if (page === "rivals") return await renderRivals();
+      if (page === "rival" && arg) return await renderRival(arg);
       if (page === "profile") return renderProfile(arg);
       return await renderFeed();
     } catch (e) {

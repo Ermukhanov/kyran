@@ -209,6 +209,19 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Competitor(Base):
+    """Конкурент, за которым следит пользователь (по БИН)."""
+    __tablename__ = "competitors"
+    __table_args__ = (UniqueConstraint("user_id", "bin"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bin: Mapped[str] = mapped_column(String(12), index=True)
+    name: Mapped[str] = mapped_column(String(500), default="")
+    last_award_id: Mapped[int] = mapped_column(Integer, default=0)  # о победах до этой записи уже сообщили
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class GeneratedDoc(Base):
     """Документ заявки, сформированный Kyran (Word)."""
     __tablename__ = "generated_docs"
