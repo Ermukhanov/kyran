@@ -16,20 +16,19 @@ AMOUNTS = {
 }
 
 WELCOME = (
-    "🦅 <b>Kyran</b> — ваш ИИ-агент для госзакупок.\n\n"
-    "Я каждый день просматриваю тендеры, присылаю только подходящие вам, "
-    "разбираю документацию и напоминаю о дедлайнах.\n\n"
+    "<b>Kyran</b> — платформа для участия в госзакупках.\n\n"
+    "Kyran ежедневно отбирает открытые закупки под профиль вашей компании, "
+    "готовит ИИ-заключение по документации и контролирует сроки подачи.\n\n"
     "<b>Что вы поставляете или какие работы выполняете?</b>\n"
     "Напишите через запятую, например:\n"
     "<i>ремонт кровли, ремонт школ, канцтовары, бумага А4</i>"
 )
-ASK_AMOUNT = "💰 Какие суммы закупок вам интересны?"
-ASK_BIN = "🏢 Напишите <b>БИН</b> компании (12 цифр) — так агент лучше поймёт ваш профиль. Можно пропустить."
+ASK_AMOUNT = "Укажите интересующий диапазон сумм закупок:"
+ASK_BIN = "Укажите <b>БИН</b> компании (12 цифр). Шаг можно пропустить."
 BAD_KEYWORDS = "Напишите хотя бы одно направление, например: <i>ремонт кровли</i>"
 BAD_BIN = "БИН/ИИН — это 12 цифр. Напишите ещё раз или нажмите «Пропустить»."
 NO_DATA = (
-    "⏳ Подключаем базу госзакупок. Как только данные пойдут, подходящие тендеры придут сюда сами — "
-    "ничего делать не нужно."
+    "Источник данных подключается. Как только поступят закупки, подходящие придут сюда автоматически."
 )
 HELP = (
     "<b>Что я умею</b>\n"
@@ -62,32 +61,32 @@ def time_left(deadline: datetime | None) -> str:
     if hours < 0:
         return f"приём завершён {when}"
     if hours < 24:
-        return f"🔥 осталось {int(hours)} ч (до {when})"
+        return f"до {when}, осталось {int(hours)} ч"
     days = int(hours // 24)
-    mark = "⚡" if days < config.URGENT_DAYS else "⏰"
-    return f"{mark} {days} дн. (до {when})"
+    return f"до {when}, осталось {days} дн."
 
 
 def card(lot: Lot, score: int | None = None, reason: str = "") -> str:
     lines = []
     if lot.is_demo:
-        lines.append("🧪 <i>ДЕМО-пример</i>")
+        lines.append("<i>Демонстрационная закупка</i>")
     head = f"<b>{escape(lot.title[:250])}</b>"
     if score is not None:
         head = f"<b>{score}%</b> · " + head
     lines.append(head)
-    lines.append(f"💰 {money(lot.amount)}  ·  {time_left(lot.deadline)}")
+    lines.append(f"Сумма: {money(lot.amount)}")
+    lines.append(f"Срок: {time_left(lot.deadline)}")
     if lot.customer:
-        lines.append(f"🏢 {escape(lot.customer[:160])}")
+        lines.append(f"Заказчик: {escape(lot.customer[:160])}")
     if reason:
-        lines.append(f"💡 {escape(reason[:200])}")
+        lines.append(f"<i>{escape(reason[:200])}</i>")
     return "\n".join(lines)
 
 
 def digest(rows: list[tuple[Lot, int]], header: str, limit_chars: int = 3800) -> str:
     text = header
     for i, (lot, score) in enumerate(rows, 1):
-        demo = " 🧪" if lot.is_demo else ""
+        demo = " (демо)" if lot.is_demo else ""
         item = (
             f"\n\n<b>{i}. {escape(lot.title[:160])}</b>{demo}\n"
             f"{score}% · {money(lot.amount, short=True)} · {time_left(lot.deadline)}"

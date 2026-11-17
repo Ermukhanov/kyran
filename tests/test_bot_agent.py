@@ -22,7 +22,7 @@ def test_texts():
 
     lot = Lot(id=1, source="t", ext_id="1", title="Ремонт <b>", customer="A & B", is_demo=True, amount=1e6)
     card = T.card(lot, 90, "почему")
-    assert "&lt;b&gt;" in card and "A &amp; B" in card and "ДЕМО" in card
+    assert "&lt;b&gt;" in card and "A &amp; B" in card and "Демонстрационная" in card
 
 
 def test_agent_tool_loop(tmp_path, monkeypatch):

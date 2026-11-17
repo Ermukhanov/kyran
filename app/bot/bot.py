@@ -39,15 +39,15 @@ def has_data() -> bool:
 def lot_buttons(lot: Lot) -> InlineKeyboardMarkup:
     row = []
     if config.PUBLIC_URL:
-        row.append(InlineKeyboardButton("🧠 Разбор", web_app=WebAppInfo(app_url(f"#lot/{lot.id}"))))
-    row.append(InlineKeyboardButton("⭐ В воронку", callback_data=f"save:{lot.id}"))
-    rows = [row, [InlineKeyboardButton("🙈 Не интересно", callback_data=f"hide:{lot.id}")]]
+        row.append(InlineKeyboardButton("Разбор", web_app=WebAppInfo(app_url(f"#lot/{lot.id}"))))
+    row.append(InlineKeyboardButton("В воронку", callback_data=f"save:{lot.id}"))
+    rows = [row, [InlineKeyboardButton("Не интересно", callback_data=f"hide:{lot.id}")]]
     if lot.url:
-        rows[1].append(InlineKeyboardButton("🔗 На портале", url=lot.url))
+        rows[1].append(InlineKeyboardButton("На портале", url=lot.url))
     return InlineKeyboardMarkup(rows)
 
 
-def open_app_markup(text: str = "📱 Открыть Kyran") -> InlineKeyboardMarkup | None:
+def open_app_markup(text: str = "Открыть Kyran") -> InlineKeyboardMarkup | None:
     if not config.PUBLIC_URL:
         return None
     return InlineKeyboardMarkup([[InlineKeyboardButton(text, web_app=WebAppInfo(app_url()))]])
@@ -88,7 +88,7 @@ async def got_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await q.answer()
     label, lo, hi = T.AMOUNTS.get(q.data.split(":", 1)[1], T.AMOUNTS["any"])
     context.user_data["amount"] = (lo, hi)
-    await q.edit_message_text(f"💰 {label}")
+    await q.edit_message_text(f"{label}")
     await reply(update, T.ASK_BIN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Пропустить →", callback_data="bin:skip")]]))
     return BIN
 
@@ -128,16 +128,16 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, company_bin
     context.user_data.clear()
 
     if not has_data():
-        await reply(update, "✅ Профиль готов.\n\n" + T.NO_DATA, reply_markup=open_app_markup())
+        await reply(update, "Профиль готов.\n\n" + T.NO_DATA, reply_markup=open_app_markup())
         return ConversationHandler.END
 
     head = (
-        f"✅ Готово! Под вас прямо сейчас открыто <b>{stats['open']}</b> тендеров "
+        f"Готово. Под вас прямо сейчас открыто <b>{stats['open']}</b> тендеров "
         f"на <b>{T.money(stats['total_amount'], short=True)}</b>"
     )
     if stats["urgent"]:
         head += f", из них <b>{stats['urgent']}</b> с дедлайном в ближайшие {config.URGENT_DAYS} дня"
-    await reply(update, head + ".", reply_markup=open_app_markup("📱 Открыть все в Kyran"))
+    await reply(update, head + ".", reply_markup=open_app_markup("Открыть все в Kyran"))
     for lot, m, _ in top:
         await reply(update, T.card(lot, m.score, m.reason), reply_markup=lot_buttons(lot))
     await reply(update, "Дальше пришлю срочные сразу, а подборку — каждое утро в 9:00. Можете писать мне обычным текстом: <i>найди ремонт спортзалов</i>.")
@@ -162,7 +162,7 @@ async def web_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await reply(update, "Веб-версия ещё не подключена.")
         return
     token = make_link_token(update.effective_user.id)
-    await reply(update, "💻 Ссылка для компьютера (личная, не пересылайте, действует 30 дней):",
+    await reply(update, "Ссылка для компьютера (личная, не пересылайте, действует 30 дней):",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Открыть Kyran в браузере", url=f"{config.PUBLIC_URL}/app?t={token}")]]))
 
 
@@ -200,13 +200,13 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     text = (
         "<b>Ваш профиль</b>\n"
-        f"🔎 Направления: {escape(', '.join(u.keywords or []) or '—')}\n"
-        f"💰 Суммы: {sums}\n"
-        f"🏢 БИН: {u.company_bin or 'не указан'}\n"
-        f"🔔 Уведомления: {'включены' if u.notify else 'на паузе'}\n\n"
+        f"Направления: {escape(', '.join(u.keywords or []) or '—')}\n"
+        f"Суммы: {sums}\n"
+        f"БИН: {u.company_bin or 'не указан'}\n"
+        f"Уведомления: {'включены' if u.notify else 'на паузе'}\n\n"
         f"Открыто под вас: {stats['open']} на {T.money(stats['total_amount'], short=True)}"
     )
-    await reply(update, text, reply_markup=open_app_markup("⚙️ Изменить в приложении"))
+    await reply(update, text, reply_markup=open_app_markup("Изменить в приложении"))
 
 
 async def toggle_notify(update: Update, on: bool) -> None:
@@ -214,7 +214,7 @@ async def toggle_notify(update: Update, on: bool) -> None:
         u = await core.get_or_create_user(s, update.effective_user.id)
         u.notify = on
         await s.commit()
-    await reply(update, "▶️ Уведомления включены." if on else "⏸ Уведомления на паузе. /resume — включить.")
+    await reply(update, "Уведомления включены." if on else "Уведомления на паузе. /resume — включить.")
 
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -240,7 +240,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lots = (await s.execute(select(func.count(Lot.id)))).scalar()
         open_lots = (await s.execute(select(func.count(Lot.id)).where(core.open_condition()))).scalar()
     srcs = ", ".join(f"{x.name}: {'вкл' if x.enabled else 'выкл'}" for x in SOURCES)
-    await reply(update, f"👥 {users} пользователей ({onboarded} настроили)\n📦 {lots} лотов ({open_lots} открыто)\n🔌 {srcs}\n🧠 ИИ: {'вкл' if ai.available() else 'выкл'}")
+    await reply(update, f"{users} пользователей ({onboarded} настроили)\n{lots} лотов ({open_lots} открыто)\n{srcs}\nИИ: {'вкл' if ai.available() else 'выкл'}")
 
 
 # ── Кнопки под карточками ──────────────────────────────────
@@ -252,7 +252,7 @@ async def on_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user = await core.get_or_create_user(s, q.from_user.id)
         if action == "save":
             await core.set_stage(s, user, int(lot_id), "saved")
-            await q.answer("⭐ Добавлено в воронку «Интересно»")
+            await q.answer("Добавлено в воронку «Интересно»")
         elif action == "hide":
             m = (await s.execute(select(Match).where(Match.user_id == user.id, Match.lot_id == int(lot_id)))).scalar_one_or_none()
             if m:
@@ -296,7 +296,7 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if re.match(r"^(https?://|www\.)\S+$", text):
             try:
                 m = await monitors.add_monitor(s, user, text)
-                await reply(update, f"👀 Слежу за сайтом «{m.title}». Сообщу, когда там что-то изменится.")
+                await reply(update, f"Слежу за сайтом «{m.title}». Сообщу, когда там что-то изменится.")
             except Exception as e:
                 await reply(update, f"Не получилось открыть сайт: {e}")
             return
@@ -307,7 +307,7 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not hits:
         await reply(update, "По этому запросу открытых тендеров нет. Добавить его в направления? Напишите /start и укажите его.")
         return
-    await reply(update, f"🔎 Нашёл по запросу «{text[:60]}»:")
+    await reply(update, f"Нашёл по запросу «{text[:60]}»:")
     for lot, score, reason in hits:
         await reply(update, T.card(lot, score, reason), reply_markup=lot_buttons(lot))
 
@@ -359,10 +359,10 @@ async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             )).all()
             if not rows:
                 continue
-            text = T.digest([(l, m.score) for l, m in rows], "☀️ <b>Тендеры на сегодня</b>")
+            text = T.digest([(l, m.score) for l, m in rows], "<b>Тендеры на сегодня</b>")
             try:
                 await context.bot.send_message(user.id, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW,
-                                               reply_markup=open_app_markup("📱 Смотреть и разобрать"))
+                                               reply_markup=open_app_markup("Смотреть и разобрать"))
                 for _, m in rows:
                     m.notified = True
             except Exception:
@@ -379,9 +379,9 @@ async def monitors_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         m = r.monitor
         if r.new_lots:
             lines = "\n".join(f"• {l.title[:120]}" for l in r.new_lots[:8])
-            text = f"🆕 На сайте «{m.title}» новые закупки:\n{lines}"
+            text = f"На сайте «{m.title}» новые закупки:\n{lines}"
         else:
-            text = f"👀 На сайте «{m.title}» что-то изменилось."
+            text = f"На сайте «{m.title}» что-то изменилось."
         try:
             await context.bot.send_message(
                 m.user_id, text, link_preview_options=NO_PREVIEW,
