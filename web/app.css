@@ -59,7 +59,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; color: var(--ink); font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
 .brand:hover { text-decoration: none; }
-.brand-mark { width: 26px; height: 26px; color: var(--brand); }
+.brand-mark { width: 34px; height: 25px; color: var(--brand); }
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav a { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); color: var(--ink-2); font-weight: 500; }
 .nav a:hover { background: var(--subtle); text-decoration: none; }
@@ -362,7 +362,7 @@ body.auth .shell { display: block; }
 body.auth .view { padding: 0; max-width: none; }
 .login { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 20px; padding: 24px 16px; }
 .login-card { width: min(420px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 32px 28px 28px; display: grid; gap: 4px; }
-.brand-mark.big { width: 40px; height: 40px; margin-bottom: 8px; }
+.brand-mark.big { width: 56px; height: 40px; margin-bottom: 8px; }
 .login h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
 .login .lead { color: var(--muted); margin: 0 0 18px; }
 .code { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }

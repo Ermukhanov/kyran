@@ -728,7 +728,7 @@
     document.body.classList.add("auth");
     view.innerHTML = `<div class="login">
       <div class="login-card">
-        <svg class="brand-mark big" viewBox="0 0 32 32" aria-hidden="true"><path d="M1 10.5c5.5-.4 9.6 1.8 13 5.6l.6-2.3c.3-1 .8-1.5 1.4-1.5s1.1.5 1.4 1.5l.6 2.3c3.4-3.8 7.5-6 13-5.6-4.6 1.6-8.2 4.6-10.6 8.8L18 23.5l-2 3-2-3-1.4-4.2C10.2 15.1 5.6 12.1 1 10.5z" fill="currentColor"/></svg>
+        <svg class="brand-mark big" viewBox="20 44 200 144" aria-hidden="true"><g fill="currentColor"><path d="M112 118 L84 112 L52 90 L22 54 L40 62 L34 50 L54 62 L50 48 L70 66 L70 54 L88 76 L112 98 Z"/><path d="M128 118 L156 112 L188 90 L218 54 L200 62 L206 50 L186 62 L190 48 L170 66 L170 54 L152 76 L128 98 Z"/><path d="M107 96 L133 96 L136 132 L120 150 L104 132 Z"/><path d="M106 140 L120 152 L134 140 L140 178 L130 170 L120 184 L110 170 L100 178 Z"/><path d="M110 104 L110 82 L118 72 L130 72 L138 78 L146 82 L140 86 L136 84 L132 92 L131 104 Z"/></g></svg>
         <h1>Вход в Kyran</h1>
         <p class="lead">${esc(message || "Вход без пароля — через Telegram. Код подтверждает, что аккаунт ваш.")}</p>
         <div id="login-box"><div class="loading"><span class="spinner"></span>Получаем код…</div></div>

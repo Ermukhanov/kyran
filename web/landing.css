@@ -23,7 +23,7 @@ h3 { font-size: 17px; font-weight: 600; }
 .top { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .top-in { display: flex; align-items: center; gap: 32px; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 700; font-size: 19px; }
-.brand svg { width: 28px; height: 28px; color: var(--brand); }
+.brand svg { width: 36px; height: 26px; color: var(--brand); }
 .top-nav { display: flex; gap: 24px; margin-left: auto; }
 .top-nav a { color: var(--ink-2); font-size: 15px; }
 .top-nav a:hover { color: var(--ink); }
