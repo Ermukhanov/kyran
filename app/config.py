@@ -41,8 +41,11 @@ DEMO_MODE = _bool("DEMO_MODE", False)                           # демо-ло�
 
 # ── ИИ ──
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")    # ← сюда ключ Anthropic
+# По умолчанию везде лёгкая и дешёвая модель. Для более глубоких разборов можно поставить
+# AI_SMART_MODEL=claude-sonnet-5-5 в переменных Railway.
 AI_FAST_MODEL = os.environ.get("AI_FAST_MODEL", "claude-haiku-5-5")     # оценка лотов
-AI_SMART_MODEL = os.environ.get("AI_SMART_MODEL", "claude-sonnet-5-5")  # разбор и агент
+AI_SMART_MODEL = os.environ.get("AI_SMART_MODEL", "claude-haiku-5-5")   # разбор, вопросы, агент
+AI_SCORE_LIMIT = int(os.environ.get("AI_SCORE_LIMIT", "30"))  # сколько лучших совпадений на человека уточнять ИИ за раз
 
 # ── Расписание ──
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "Asia/Almaty"))

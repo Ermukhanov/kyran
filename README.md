@@ -73,4 +73,4 @@ pytest
 DEMO_MODE=true SECRET_KEY=dev uvicorn app.main:app --reload   # без TELEGRAM_BOT_TOKEN работает только веб
 ```
 
-Модели ИИ меняются переменными `AI_FAST_MODEL` и `AI_SMART_MODEL`.
+Модели ИИ меняются переменными `AI_FAST_MODEL` и `AI_SMART_MODEL` (по умолчанию обе — лёгкая `claude-haiku-5-5`). Расход токенов пишется в логи строками «ИИ …: вход N, выход M токенов».

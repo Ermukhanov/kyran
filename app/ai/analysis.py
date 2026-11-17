@@ -17,7 +17,7 @@ from app.ai.scoring import profile_text
 from app.db import Lot, User, aware
 
 log = logging.getLogger(__name__)
-MAX_DOC_CHARS = 60_000
+MAX_DOC_CHARS = 40_000
 MAX_DOCS = 5
 
 SYSTEM = (
@@ -161,4 +161,5 @@ async def ask(user: User, lot: Lot, question: str, analysis: dict | None, histor
             messages.append({"role": h["role"], "content": str(h["content"])[:2000]})
     messages.append({"role": "user", "content": question[:1000]})
     resp = await client.client().messages.create(model=config.AI_SMART_MODEL, max_tokens=1200, system=ASK_SYSTEM, messages=messages)
+    client.log_usage(config.AI_SMART_MODEL, resp)
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()

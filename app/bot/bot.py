@@ -404,7 +404,8 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await update.effective_chat.send_action(ChatAction.TYPING)
 
-    if ai.available():
+    user_now = await load_user(update)
+    if ai.available() and billing.current_plan(user_now)[1]:
         history = context.user_data.setdefault("history", [])
         async with db.Session() as s:
             user = await core.get_or_create_user(s, update.effective_user.id, update.effective_user.full_name)

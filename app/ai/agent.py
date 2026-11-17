@@ -125,6 +125,7 @@ async def respond(s: AsyncSession, user: User, history: list[dict[str, Any]], te
         resp = await ai.client().messages.create(
             model=config.AI_SMART_MODEL, max_tokens=1500, system=system, tools=TOOLS, messages=messages
         )
+        ai.log_usage(config.AI_SMART_MODEL, resp)
         if resp.stop_reason != "tool_use":
             reply = "".join(b.text for b in resp.content if b.type == "text").strip()
             return reply or "Готово.", run

@@ -25,6 +25,13 @@ def client():
     return _client
 
 
+def log_usage(model: str, resp) -> None:
+    """Пишет в лог расход токенов — по логам Railway видно, сколько тратится."""
+    u = getattr(resp, "usage", None)
+    if u:
+        log.info("ИИ %s: вход %s, выход %s токенов", model, getattr(u, "input_tokens", "?"), getattr(u, "output_tokens", "?"))
+
+
 def extract_json(text: str) -> Any:
     """Достаёт JSON из ответа модели, даже если вокруг есть лишний текст или ```json."""
     text = text.strip()
@@ -50,6 +57,7 @@ async def ask_json(model: str, system: str, prompt: str, max_tokens: int = 4000)
             model=model, max_tokens=max_tokens, system=system, messages=messages
         )
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        log_usage(model, resp)
         if resp.stop_reason == "max_tokens":
             log.warning("Ответ модели обрезан по max_tokens=%s", max_tokens)
         try:

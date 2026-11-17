@@ -100,7 +100,14 @@ async def match_user(s: AsyncSession, user: User, lots: list[Lot]) -> list[Match
         if hit:
             candidates.append((lot, hit.score, hit.reason))
 
-    ai_scores = await score_lots(user, [c[0] for c in candidates]) if ai.available() else {}
+    # Экономия токенов: ИИ уточняет только лучшие совпадения и только при активном тарифе
+    ai_scores: dict = {}
+    if ai.available():
+        from app.services.billing import current_plan
+
+        if current_plan(user)[1]:
+            top = sorted(candidates, key=lambda c: -c[1])[: config.AI_SCORE_LIMIT]
+            ai_scores = await score_lots(user, [c[0] for c in top])
     created: list[Match] = []
     for lot, score, reason in candidates:
         by_ai = lot.id in ai_scores
