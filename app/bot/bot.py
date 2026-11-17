@@ -11,7 +11,8 @@ from telegram import (
 )
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
-    Application, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters,
+    Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler,
+    MessageHandler, filters,
 )
 
 from app import config, db, runtime
@@ -77,14 +78,27 @@ async def confirm_login(update: Update, *, code: str | None = None, nonce: str |
     return ok
 
 
+LOGIN_CODE = re.compile(r"^\s*(\d{3})\s*-?\s*(\d{3})\s*$")
+
+
+async def login_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/start login_<nonce> — переход с сайта. Работает в любом состоянии диалога."""
+    arg = context.args[0] if context.args else ""
+    ok = await confirm_login(update, nonce=arg[6:])
+    user = await load_user(update)
+    if ok and not user.onboarded:
+        await reply(update, "Чтобы получать подходящие закупки в Telegram, настройте подбор: /start")
+    raise ApplicationHandlerStop
+
+
+async def login_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """6 цифр с сайта (можно с пробелом или дефисом). Работает в любом состоянии диалога."""
+    m = LOGIN_CODE.match(update.message.text or "")
+    await confirm_login(update, code=m.group(1) + m.group(2))
+    raise ApplicationHandlerStop
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    arg = (context.args or [""])[0] if context.args else ""
-    if arg.startswith("login_"):
-        await confirm_login(update, nonce=arg[6:])
-        user = await load_user(update)
-        if user.onboarded:
-            return ConversationHandler.END
-        await reply(update, "Чтобы начать получать подходящие закупки, ответьте на пару вопросов.")
     context.user_data.clear()
     await load_user(update)
     await reply(update, T.WELCOME)
@@ -388,9 +402,6 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
     if not text:
         return
-    if re.fullmatch(r"\d{6}", text):
-        await confirm_login(update, code=text)
-        return
     await update.effective_chat.send_action(ChatAction.TYPING)
 
     if ai.available():
@@ -600,6 +611,9 @@ def build() -> Application:
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
     )
+    # Вход на сайт — раньше всех остальных обработчиков (группа -1), чтобы код не попал в онбординг
+    application.add_handler(CommandHandler("start", login_link_handler, filters=filters.Regex(r"^/start\s+login_")), group=-1)
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex(LOGIN_CODE), login_code_handler), group=-1)
     application.add_handler(onboarding)
     for name, fn in [("app", app_cmd), ("web", web_cmd), ("find", find_cmd), ("urgent", urgent_cmd), ("profile", profile_cmd),
                      ("stop", stop_cmd), ("resume", resume_cmd), ("help", help_cmd), ("stats", stats_cmd),

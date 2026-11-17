@@ -64,3 +64,49 @@ def test_agent_tool_loop(tmp_path, monkeypatch):
     results = [c for m in calls[-1]["messages"] if isinstance(m["content"], list) for c in m["content"]
                if isinstance(c, dict) and c.get("type") == "tool_result"]
     assert len(results) == 2 and "matched_now" in results[0]["content"]
+
+
+def test_login_handlers_take_priority(tmp_path):
+    """Код входа и ссылка с сайта обрабатываются до онбординга (группа -1)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from telegram.ext import ApplicationHandlerStop
+
+    from app import config, db
+    from app.bot import bot as B
+    from app.services import login
+
+    config.TELEGRAM_BOT_TOKEN = "123:abc"
+    app = B.build()
+    early = app.handlers[-1]
+    assert len(early) == 2
+    assert B.LOGIN_CODE.match("123 456") and B.LOGIN_CODE.match("123456") and not B.LOGIN_CODE.match("1234567")
+
+    db.configure(f"sqlite+aiosqlite:///{tmp_path}/b.db")
+    sent = []
+
+    async def reply_text(text, **kw):
+        sent.append(text)
+
+    def upd(text):
+        return SimpleNamespace(
+            effective_user=SimpleNamespace(id=555, full_name="Тест", username="t"),
+            effective_message=SimpleNamespace(reply_text=reply_text),
+            message=SimpleNamespace(text=text),
+        )
+
+    async def flow():
+        await db.init_db()
+        async with db.Session() as s:
+            lc = await login.start(s)
+        try:
+            await B.login_code_handler(upd(lc.code[:3] + " " + lc.code[3:]), SimpleNamespace(args=[]))
+        except ApplicationHandlerStop:
+            pass
+        async with db.Session() as s:
+            return await login.poll(s, lc.nonce)
+
+    assert asyncio.run(flow())
+    assert "подтверждён" in sent[0]
+    config.TELEGRAM_BOT_TOKEN = ""
