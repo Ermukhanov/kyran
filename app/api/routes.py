@@ -85,6 +85,7 @@ def lot_json(lot: Lot, match: Match | None = None, stage: str | None = None) -> 
         "url": lot.url, "documents": lot.documents or [], "is_demo": lot.is_demo,
         "score": match.score if match else None, "reason": match.reason if match else "",
         "by_ai": match.by_ai if match else False, "stage": stage,
+        "platform": (lot.raw or {}).get("platform", "") if lot.source == "zakup" else "",
     }
 
 
@@ -148,6 +149,7 @@ async def update_me(body: ProfileIn, u: User = Depends(get_user), s: AsyncSessio
         u.onboarded = True
     await s.commit()
     if rematch:
+        await core.fetch_for(s, u.keywords or [])
         await core.rematch_user(s, u)
     return {"user": user_json(u), "stats": await core.user_stats(s, u)}
 

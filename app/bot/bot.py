@@ -188,6 +188,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, company_bin
             if info and info.get("name"):
                 user.company_name = info["name"]
         await s.commit()
+        await core.fetch_for(s, user.keywords or [])
         await core.rematch_user(s, user)
         stats = await core.user_stats(s, user)
         top = await core.feed(s, user, limit=3)
@@ -307,6 +308,11 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lots = (await s.execute(select(func.count(Lot.id)))).scalar()
         open_lots = (await s.execute(select(func.count(Lot.id)).where(core.open_condition()))).scalar()
     srcs = ", ".join(f"{x.name}: {'вкл' if x.enabled else 'выкл'}" for x in SOURCES)
+    z = next((x for x in SOURCES if x.name == "zakup"), None)
+    if z:
+        srcs += (f"\nzakup.gov.kz: последний успех {z.last_ok:%d.%m %H:%M} UTC" if z.last_ok else "\nzakup.gov.kz: успешных сборов ещё не было")
+        if z.last_error:
+            srcs += f", ошибка: {T.escape(z.last_error)}"
     await reply(update, f"{users} пользователей ({onboarded} настроили)\n{lots} лотов ({open_lots} открыто)\n{srcs}\nИИ: {'вкл' if ai.available() else 'выкл'}")
 
 

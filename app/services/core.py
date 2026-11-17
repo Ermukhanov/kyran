@@ -63,12 +63,50 @@ async def upsert_lots(s: AsyncSession, items: list[LotData]) -> list[Lot]:
     return new
 
 
+async def fetch_for(s: AsyncSession, keywords: list[str], timeout: float = 25) -> int:
+    """Сразу подтянуть открытые лоты по новым направлениям (без ожидания часового сбора)."""
+    import asyncio
+
+    from app.sources.registry import SOURCES
+
+    src = next((x for x in SOURCES if getattr(x, "wants_keywords", False) and x.enabled), None)
+    if not src or not keywords:
+        return 0
+    try:
+        items = await asyncio.wait_for(src.search(keywords, max_pages=2), timeout=timeout)
+    except Exception:
+        log.warning("Быстрый поиск по направлениям не удался", exc_info=True)
+        return 0
+    new = await upsert_lots(s, items)
+    await s.commit()
+    if new:
+        await match_new_lots(s, new)
+        await s.commit()
+    return len(new)
+
+
+async def all_keywords(s: AsyncSession) -> list[str]:
+    """Направления всех настроенных пользователей — по ним ищем на открытых площадках. Частые — первыми."""
+    from collections import Counter
+
+    rows = (await s.execute(select(User.keywords).where(User.onboarded.is_(True)))).scalars().all()
+    counter: Counter = Counter()
+    for kws in rows:
+        for k in kws or []:
+            k = str(k).strip().lower()
+            if len(k) >= 3:
+                counter[k] += 1
+    return [k for k, _ in counter.most_common()]
+
+
 async def collect(s: AsyncSession, sources: list[Source]) -> list[Lot]:
     """Забрать лоты из всех включённых источников. Сломанный источник не роняет остальные."""
     new: list[Lot] = []
     for src in sources:
         if not src.enabled:
             continue
+        if getattr(src, "wants_keywords", False):
+            src.keywords = await all_keywords(s)
         try:
             new += await upsert_lots(s, await src.fetch())
         except Exception:

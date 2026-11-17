@@ -102,7 +102,7 @@
     const f = state.me.features;
     const real = Object.entries(f.sources).filter(([k, v]) => v && k !== "demo").length;
     document.getElementById("src-dot").className = "dot " + (real ? "on" : f.demo ? "demo" : "");
-    document.getElementById("src-text").textContent = real ? "Портал госзакупок подключён" : f.demo ? "Демонстрационные данные" : "Источник не подключён";
+    document.getElementById("src-text").textContent = real ? "Закупки: zakup.gov.kz" : f.demo ? "Демонстрационные данные" : "Источник не подключён";
     document.getElementById("ai-dot").className = "dot " + (f.ai ? "on" : "");
     document.getElementById("ai-text").textContent = f.ai ? "ИИ-модуль активен" : "ИИ-модуль не подключён";
     document.getElementById("demo-strip").hidden = !f.demo;
@@ -261,9 +261,10 @@
                 <dt>Заказчик</dt><dd>${esc(l.customer || "—")}</dd>
                 <dt>Регион</dt><dd>${esc(l.region || "—")}</dd>
                 <dt>Способ закупки</dt><dd>${esc(l.method || "—")}</dd>
+                ${l.platform ? `<dt>Площадка</dt><dd>${esc(l.platform)}</dd>` : ""}
                 <dt>Сумма</dt><dd>${esc(money(l.amount))}</dd>
                 <dt>Приём заявок до</dt><dd>${esc(dateTime(l.deadline))}</dd>
-                <dt>Источник</dt><dd>${l.url ? `<a href="${esc(l.url)}" target="_blank" rel="noopener">Открыть на портале</a>` : esc(l.source === "demo" ? "Демонстрационные данные" : l.source === "upload" ? "ТЗ, присланное в Telegram" : l.source)}</dd>
+                <dt>Источник</dt><dd>${l.url ? `<a href="${esc(l.url)}" target="_blank" rel="noopener">Открыть на zakup.gov.kz</a>` : esc(l.source === "demo" ? "Демонстрационные данные" : l.source === "upload" ? "ТЗ, присланное в Telegram" : l.source)}</dd>
               </dl>
               ${l.reason ? `<p class="reason">Почему подходит: ${esc(l.reason)}</p>` : ""}
             </div>

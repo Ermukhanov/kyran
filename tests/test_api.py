@@ -29,7 +29,7 @@ def test_requires_auth(client):
 
 def test_full_flow(client, monkeypatch):
     me = client.get("/api/me").json()
-    assert me["features"] == {"ai": False, "demo": True, "sources": {"goszakup": False, "demo": True}}
+    assert me["features"] == {"ai": False, "demo": True, "sources": {"zakup": False, "goszakup": False, "demo": True}}
     assert me["user"]["onboarded"] is False
 
     r = client.put("/api/me", json={"keywords": ["ремонт кровли", "мебель"], "min_amount": None, "max_amount": None})

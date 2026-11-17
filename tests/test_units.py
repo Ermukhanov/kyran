@@ -118,3 +118,38 @@ def test_extract_json():
     assert extract_json('ok {"scores": [1]} end') == {"scores": [1]}
     with pytest.raises(ValueError):
         extract_json("нет json")
+
+
+def test_zakup_row_to_lot_and_search(monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from app.sources import zakup as Z
+
+    future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    row = {"id": 88058705, "announcement_id": 17691796, "lot_number": "88058705-ЗЦП1", "name_ru": "Кабель силовой",
+           "description_ru": "ВВГ 3х2,5", "organization_name": "КГУ «Школа №5»", "total_price": "501900.00",
+           "purchase_method_name": "Запрос ценовых предложений", "offer_end_date": future,
+           "announcement_publish_date": "2026-11-17T09:00:00+05:00", "system": {"id": 1, "name": "Госзакупки"},
+           "enstrus": [{"short_description_ru": "Кабель"}], "status": {"is_active": True}}
+    lot = Z.row_to_lot(row)
+    assert lot.source == "zakup" and lot.ext_id == "88058705" and lot.amount == 501900.0
+    assert lot.url == "https://zakup.gov.kz/announcement/17691796#lot-88058705" and lot.raw["platform"] == "Госзакупки"
+    assert Z.is_open(row) and not Z.is_open({**row, "offer_end_date": past})
+    assert not Z.is_open({**row, "status": {"is_active": False}})
+
+    monkeypatch.setenv("ZAKUP_ENABLED", "true")
+    monkeypatch.setattr(Z, "PAUSE", 0)
+    calls = []
+
+    async def fake_page(self, session, url, q, offset):
+        calls.append((q, url))
+        if url is None:
+            return {"results": [row, {**row, "id": 2, "offer_end_date": past}], "next": "https://zakup.gov.kz/api/core/api/public/lots/?offset=50"}
+        return {"results": [{**row, "id": 3}], "next": "https://evil.example/next"}
+
+    monkeypatch.setattr(Z.ZakupSource, "_page", fake_page)
+    lots = asyncio.run(Z.ZakupSource().search(["кабель"]))
+    assert sorted(l.ext_id for l in lots) == ["3", "88058705"]  # закрытый отброшен, чужой next не открываем
+    assert len(calls) == 2

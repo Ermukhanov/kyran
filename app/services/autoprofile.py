@@ -154,5 +154,6 @@ async def apply(s: AsyncSession, user: User, bin_value: str, keywords: list[str]
         user.about = about[:2000]
     user.keywords, user.onboarded, user.notify = kws, True, True
     await s.commit()
+    await core.fetch_for(s, kws)
     await core.rematch_user(s, user)
     return user
