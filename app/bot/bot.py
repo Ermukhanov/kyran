@@ -733,6 +733,7 @@ async def post_init(application: Application) -> None:
     runtime.bot = application.bot
     try:
         runtime.bot_username = (await application.bot.get_me()).username or ""
+        log.info("Бот: @%s", runtime.bot_username)
     except Exception:
         log.exception("get_me не удался")
     if config.PUBLIC_URL:
