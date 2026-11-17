@@ -422,6 +422,8 @@ body.auth .view { padding: 0; max-width: none; }
 .ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; color: var(--ink-2); }
 .chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+#kw-suggest { margin-bottom: 10px; }
 .ask-form { display: flex; gap: 8px; }
 
 /* ── Планшет и телефон ────────────────────── */

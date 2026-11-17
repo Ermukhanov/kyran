@@ -750,6 +750,7 @@
       });
     };
     draw();
+    box.add = (k) => { k = k.trim().toLowerCase(); if (k && !kws.includes(k)) { kws.push(k); draw(); } };
     box.value = () => {
       const pending = box.querySelector("input").value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
       return [...kws, ...pending.filter((x) => !kws.includes(x))];
@@ -767,10 +768,12 @@
 
   function renderOnboarding() {
     view.innerHTML = `<div class="onboard">
-      <h1>Настройте подбор закупок</h1>
-      <p class="lead">Укажите направления деятельности компании. Kyran будет отбирать открытые закупки по этим направлениям и присылать срочные в Telegram.</p>
+      <h1>Что поставляет ваша компания?</h1>
+      <p class="lead">Это первый и единственный шаг настройки. Выберите направления или впишите свои — Kyran сразу покажет открытые закупки по ним.</p>
       <div class="form">
-        <div class="form-row"><label class="title">Направления деятельности</label><p class="hint">Товары или работы, которые вы поставляете. Через запятую или Enter.</p><div id="kw"></div></div>
+        <div class="form-row"><label class="title">Направления деятельности</label><p class="hint">Нажмите на подходящие или впишите своё и нажмите Enter.</p>
+          <div class="ask-chips" id="kw-suggest">${["ремонт кровли", "ремонт школ", "благоустройство", "канцтовары", "бумага", "мебель", "компьютерная техника", "продукты питания", "уборка помещений", "спецодежда", "медицинские расходные материалы", "видеонаблюдение"].map((k) => `<button class="chip" type="button">${k}</button>`).join("")}</div>
+          <div id="kw"></div></div>
         <div class="form-row"><label class="title" for="amount">Диапазон сумм</label><div id="am"></div></div>
         <div class="form-actions"><button class="btn btn-primary" id="go">Показать подходящие закупки</button></div>
       </div>
@@ -780,6 +783,7 @@
         <div><strong>Контроль сроков</strong>Уведомления о закупках с близким сроком подачи.</div>
       </div></div>`;
     const kw = keywordEditor([]); view.querySelector("#kw").append(kw);
+    view.querySelectorAll("#kw-suggest .chip").forEach((c) => c.addEventListener("click", () => { kw.add(c.textContent); c.setAttribute("aria-pressed", "true"); }));
     const am = amountSelect(null, null); view.querySelector("#am").append(am);
     view.querySelector("#go").addEventListener("click", async (e) => {
       const keywords = kw.value();
