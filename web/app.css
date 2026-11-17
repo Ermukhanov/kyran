@@ -168,7 +168,10 @@ table.grid { width: 100%; border-collapse: collapse; }
 .input:focus, .textarea:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* ── Карточка тендера ─────────────────────── */
-.crumbs { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.crumbs { color: var(--muted); font-size: 13px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.back { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-weight: 500; font-size: 13px; cursor: pointer; }
+.back:hover { background: var(--subtle); }
+.back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .crumbs a { color: var(--muted); }
 .detail { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
 .detail-head { margin-bottom: 20px; }
@@ -374,10 +377,13 @@ body.auth .view { padding: 0; max-width: none; }
 
 /* ── Конкуренты ───────────────────────────── */
 .rival-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-.rival { display: grid; gap: 14px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); color: inherit; }
+.rival { position: relative; display: grid; gap: 14px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); color: inherit; }
 .rival:hover { text-decoration: none; border-color: var(--line-strong); }
 .rival:hover .cell-title { color: var(--accent); }
-.rival-top { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.rival-del { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: var(--radius-sm); border: none; background: none; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.rival-del:hover { background: var(--bad-soft); color: var(--bad); }
+.rival-del svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.rival-top { padding-right: 30px; display: flex; gap: 12px; align-items: center; min-width: 0; }
 .rival-top .cell-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rival-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding-top: 12px; border-top: 1px solid var(--line); }
 .rival-stats dt { font-size: 12px; color: var(--muted); }

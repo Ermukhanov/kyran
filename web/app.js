@@ -245,7 +245,7 @@
     const leftPct = l.hours_left == null ? 100 : Math.max(2, Math.min(100, (l.hours_left / (14 * 24)) * 100));
     const docs = (l.documents || []).filter((d) => d.url);
     view.innerHTML = `
-      <div class="crumbs"><a href="#feed">Закупки</a> / Карточка закупки</div>
+      <div class="crumbs"><button type="button" class="back" data-back><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4l-6 6 6 6"/></svg>Назад</button><span><a href="#feed">Закупки</a> / Карточка закупки</span></div>
       <header class="detail-head">
         <h1>${esc(l.title)}</h1>
         <p class="page-sub">${esc(l.customer || "Заказчик не указан")}</p>
@@ -678,6 +678,7 @@
       </form>
       ${items.length ? `<div class="rival-grid">${items.map((x) => `
         <a class="rival" href="#rival/${x.bin}">
+          <button type="button" class="rival-del" data-unfollow="${x.bin}" aria-label="Не следить за ${esc(x.name)}" title="Не следить"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
           <div class="rival-top"><span class="avatar">${esc(initials({ company_name: x.name }))}</span><div><div class="cell-title">${esc(x.name)}</div><div class="cell-sub">БИН ${esc(x.bin)}</div></div></div>
           <dl class="rival-stats"><div><dt>Побед за год</dt><dd>${x.wins}</dd></div><div><dt>Сумма</dt><dd>${esc(moneyShort(x.total))}</dd></div><div><dt>Последняя</dt><dd>${x.last_win ? esc(dateShort(x.last_win)) : "—"}</dd></div></dl>
         </a>`).join("")}</div>`
@@ -694,6 +695,13 @@
       if (await followBin(bin, fd.get("name"))) renderRivals();
     });
     view.querySelectorAll("[data-follow]").forEach((b) => b.addEventListener("click", async () => { if (await followBin(b.dataset.follow, b.dataset.name, b)) renderRivals(); }));
+    view.querySelectorAll("[data-unfollow]").forEach((b) => b.addEventListener("click", async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const card = b.closest(".rival");
+      card.style.opacity = ".4";
+      try { await api(`/competitors/${b.dataset.unfollow}`, { method: "DELETE" }); haptic(); toast("Удалено из конкурентов"); renderRivals(); }
+      catch (err) { card.style.opacity = ""; toast(err.message); }
+    }));
   }
 
   async function renderRival(bin) {
@@ -704,7 +712,7 @@
     const MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
     const list = (arr) => arr.length ? `<ol class="rank">${arr.map((x) => `<li><span>${esc(x.name)}</span><b>${x.wins}</b></li>`).join("")}</ol>` : `<p class="cell-sub">Нет данных</p>`;
     view.innerHTML = `
-      <div class="crumbs"><a href="#rivals">Конкуренты</a> / Досье</div>
+      <div class="crumbs"><button type="button" class="back" data-back><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4l-6 6 6 6"/></svg>Назад</button><span><a href="#rivals">Конкуренты</a> / Досье</span></div>
       <div class="page-head"><div class="profile-head" style="margin:0"><span class="avatar xl">${esc(initials({ company_name: d.name || "?" }))}</span>
         <div><h1>${esc(d.name || "Компания")}</h1><p class="page-sub">БИН ${esc(d.bin)}${d.is_demo ? " · демонстрационные данные" : ""}</p></div></div>
         <div>${d.following ? `<button class="btn" id="unfollow">Не следить</button>` : `<button class="btn btn-primary" id="follow">Следить</button>`}</div></div>
@@ -728,7 +736,10 @@
           : `<div class="empty"><p>За год побед этой компании в данных нет.</p></div>`}</section>`;
     const f = view.querySelector("#follow"), u = view.querySelector("#unfollow");
     if (f) f.addEventListener("click", async () => { if (await followBin(d.bin, d.name, f)) renderRival(bin); });
-    if (u) u.addEventListener("click", async () => { await api(`/competitors/${d.bin}`, { method: "DELETE" }); toast("Больше не следим"); renderRival(bin); });
+    if (u) u.addEventListener("click", async () => {
+      await api(`/competitors/${d.bin}`, { method: "DELETE" }); haptic();
+      toast(`${d.name || "Компания"} удалена из конкурентов`); location.hash = "#rivals";
+    });
   }
 
   // ── Отчёт недели ────────────────────────────────
@@ -739,7 +750,7 @@
     const m = r.missed, st = r.activity.stages;
     const maxW = Math.max(1, ...r.winners.map((w) => w.total));
     view.innerHTML = `
-      <div class="crumbs"><a href="#feed">Закупки</a> / Отчёт</div>
+      <div class="crumbs"><button type="button" class="back" data-back><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4l-6 6 6 6"/></svg>Назад</button><span><a href="#feed">Закупки</a> / Отчёт</span></div>
       <div class="page-head"><div><h1>Что прошло мимо вас</h1>
         <p class="page-sub">Итоги подходящих вам закупок, которые выиграли другие. Помогает понять, где вы теряете деньги и с кем конкурируете.${r.is_demo ? " По демонстрационным данным." : ""}</p></div>
         <div class="segmented" role="group" aria-label="Период">${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"]].map(([d, n]) => `<button data-days="${d}" aria-pressed="${d === days}">${n}</button>`).join("")}</div></div>
@@ -1076,9 +1087,15 @@
   }
 
   // ── Роутер ──────────────────────────────────────
-  function goBack() { if (history.length > 1) history.back(); else location.hash = "#feed"; }
+  function goBack() {
+    const page = (location.hash.slice(1) || "feed").split("/")[0];
+    const parent = { rival: "#rivals", report: "#feed", lot: "#feed" }[page] || "#feed";
+    // Внутри сессии — назад по истории; открыли страницу по ссылке — в родительский раздел
+    if (state.navCount > 1) history.back(); else location.hash = parent;
+  }
 
   async function route() {
+    state.navCount = (state.navCount || 0) + 1;
     const [page, arg] = (location.hash.slice(1) || "feed").split("/");
     if (tg && page !== "lot" && page !== "rival") { tg.BackButton.hide(); tg.BackButton.offClick(goBack); }
     const tab = page === "lot" || page === "report" ? "feed" : page === "rival" ? "rivals" : page;
@@ -1102,6 +1119,7 @@
     }
   }
 
+  view.addEventListener("click", (e) => { if (e.target.closest("[data-back]")) goBack(); });
   window.addEventListener("hashchange", route);
   if (!authHeader()) renderLogin(); else route();
 })();
