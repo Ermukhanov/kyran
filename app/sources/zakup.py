@@ -40,6 +40,22 @@ HEADERS = {
 }
 
 
+def _first(items: Any, *keys: str) -> str:
+    """Первое непустое значение из списка словарей/строк (customers, delivery_addresses)."""
+    if not isinstance(items, list):
+        return ""
+    for it in items:
+        if isinstance(it, str) and it.strip():
+            return it.strip()
+        if isinstance(it, dict):
+            v = pick(it, *keys)
+            if isinstance(v, dict):
+                v = pick(v, "name_ru", "address_ru", "full_name_ru")
+            if v not in (None, ""):
+                return str(v).strip()
+    return ""
+
+
 def row_to_lot(row: dict[str, Any]) -> LotData | None:
     lot_id = pick(row, "id", "external_id")
     title = " ".join(str(pick(row, "name_ru", "description_ru", "announcement_name_ru", default="")).split())
@@ -56,10 +72,11 @@ def row_to_lot(row: dict[str, Any]) -> LotData | None:
         ext_id=str(lot_id),
         title=title[:500],
         description=description[:2000],
-        customer=str(pick(row, "organization_name", "customer_name", default=""))[:500],
-        customer_bin=str(pick(row, "organization_bin", "customer_bin", "bin", default=""))[:12],
+        customer=str(pick(row, "organization_name", "customer_name", default="") or _first(row.get("customers"), "name_ru", "organization_name"))[:500],
+        customer_bin=(str(pick(row, "organization_bin", "customer_bin", default="")) or _first(row.get("customers"), "bin", "biin", "iin"))[:12],
         amount=to_float(pick(row, "total_price", "amount", "sum")),
-        region=str(pick(row, "delivery_place", "kato_name", "region_name", default=""))[:200],
+        region=(str(pick(row, "delivery_place", "kato_name", "region_name", default=""))
+                or _first(row.get("delivery_addresses"), "kato_name_ru", "kato", "address_ru", "address", "name_ru"))[:200],
         method=str(pick(row, "purchase_method_name", default=""))[:200],
         deadline=parse_dt(pick(row, "offer_end_date")),
         published_at=parse_dt(pick(row, "announcement_publish_date", "publish_date")),
