@@ -129,6 +129,8 @@ class ZakupSource:
                         log.warning("zakup.gov.kz: «%s» — %s", q, self.last_error)
                         break
                     rows = data.get("results") or []
+                    if offset == 0:
+                        log.info("zakup.gov.kz: «%s» — строк на первой странице: %d, всего: %s", q, len(rows), data.get("count"))
                     for row in rows:
                         if isinstance(row, dict) and is_open(row):
                             lot = row_to_lot(row)
@@ -147,6 +149,39 @@ class ZakupSource:
             self.last_ok, self.last_error = datetime.now(timezone.utc), ""
         log.info("zakup.gov.kz: %d открытых лотов по %d запросам", len(found), min(len(queries), MAX_QUERIES))
         return list(found.values())
+
+    async def diagnose(self, q: str, with_date: bool = True) -> str:
+        """Для админа: что реально отвечает площадка на запрос."""
+        import aiohttp
+
+        params = {"q": q, "limit": 5, "offset": 0}
+        if with_date:
+            params["offer_end_date__gte"] = datetime.now(timezone.utc).isoformat()
+        try:
+            async with aiohttp.ClientSession(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=40)) as s:
+                async with s.get(API, params=params) as resp:
+                    body = await resp.text()
+                    status, ctype = resp.status, resp.headers.get("Content-Type", "")
+        except Exception as e:
+            return f"Ошибка соединения: {type(e).__name__}: {e}"
+        lines = [f"HTTP {status}, {ctype}, {len(body)} байт"]
+        try:
+            import json
+
+            data = json.loads(body)
+        except ValueError:
+            return "\n".join(lines + ["Не JSON: " + body[:300]])
+        if isinstance(data, dict):
+            rows = data.get("results") or []
+            lines.append(f"ключи: {', '.join(list(data.keys())[:10])}; count={data.get('count')}; строк: {len(rows)}")
+            for r in rows[:3]:
+                if isinstance(r, dict):
+                    lines.append(f"• {str(r.get('name_ru'))[:60]} | конец: {r.get('offer_end_date')} | статус: {r.get('status_name') or r.get('status')} | открыт: {is_open(r)}")
+            if rows and isinstance(rows[0], dict):
+                lines.append("поля: " + ", ".join(sorted(rows[0].keys()))[:900])
+        else:
+            lines.append(f"Ответ — {type(data).__name__}")
+        return "\n".join(lines)
 
     async def fetch(self) -> list[LotData]:
         return await self.search(self.keywords)

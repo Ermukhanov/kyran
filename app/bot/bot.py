@@ -316,6 +316,19 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await reply(update, f"{users} пользователей ({onboarded} настроили)\n{lots} лотов ({open_lots} открыто)\n{srcs}\nИИ: {'вкл' if ai.available() else 'выкл'}")
 
 
+async def zakup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Админ: /zakup <запрос> — диагностика открытого поиска zakup.gov.kz."""
+    if update.effective_user.id not in config.ADMIN_IDS:
+        return
+    z = next((x for x in SOURCES if x.name == "zakup"), None)
+    q = " ".join(context.args) or "ремонт"
+    await update.effective_chat.send_action(ChatAction.TYPING)
+    with_date = await z.diagnose(q, True)
+    without = await z.diagnose(q, False)
+    await update.effective_message.reply_text(f"Запрос «{q}»\n\nС фильтром по сроку:\n{with_date}\n\nБез фильтра:\n{without}"[:4000],
+                                              link_preview_options=NO_PREVIEW)
+
+
 async def logout_all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with db.Session() as s:
         user = await core.get_or_create_user(s, update.effective_user.id)
@@ -883,7 +896,8 @@ def build() -> Application:
                      ("stop", stop_cmd), ("resume", resume_cmd), ("help", help_cmd), ("stats", stats_cmd),
                      ("logout_all", logout_all_cmd), ("plan", plan_cmd), ("grant", grant_cmd),
                      ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd), ("report", report_cmd),
-                     ("follow", follow_cmd), ("rivals", rivals_cmd), ("unfollow", unfollow_cmd)]:
+                     ("follow", follow_cmd), ("rivals", rivals_cmd), ("unfollow", unfollow_cmd),
+                     ("zakup", zakup_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
     application.add_handler(CallbackQueryHandler(on_generate_button, pattern=r"^gen:(tech|clarify|cover|inventory|experience):\d+$"))
