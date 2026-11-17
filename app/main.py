@@ -44,10 +44,11 @@ async def lifespan(_: FastAPI):
              {s.name: s.enabled for s in SOURCES}, "вкл" if ai.available() else "выкл", config.PUBLIC_URL or "—")
     bot_app, task = None, None
     if config.TELEGRAM_BOT_TOKEN:
-        from app.bot.bot import build
+        from app.bot.bot import build, post_init
 
         bot_app = build()
         await bot_app.initialize()
+        await post_init(bot_app)  # при ручном запуске PTB сам post_init не вызывает
         await bot_app.start()
         await bot_app.updater.start_polling(drop_pending_updates=True)
         log.info("Telegram-бот запущен")

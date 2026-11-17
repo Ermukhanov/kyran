@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 from sqlalchemy import (
-    JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint,
+    JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint,
+    inspect, text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -45,6 +46,11 @@ class User(Base):
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     lang: Mapped[str] = mapped_column(String(2), default="ru")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Тариф: trial → start / pro / team. plan_until — до какого момента оплачен (для trial — конец пробного периода)
+    plan: Mapped[str] = mapped_column(String(20), default="trial", server_default="trial")
+    plan_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Увеличение номера разлогинивает все устройства
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class Lot(Base):
@@ -100,6 +106,8 @@ class PipelineItem(Base):
     stage: Mapped[str] = mapped_column(String(20), default="saved")
     note: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    reminded_3d: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    reminded_1d: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class Analysis(Base):
@@ -132,6 +140,67 @@ class Monitor(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+DOC_KINDS = {
+    "charter": "Учредительные документы",
+    "registration": "Справка о государственной регистрации",
+    "license": "Лицензия / разрешение",
+    "tax": "Справка об отсутствии налоговой задолженности",
+    "bank": "Справка банка об отсутствии задолженности",
+    "certificate": "Сертификат (ISO, СТ-KZ, соответствия)",
+    "experience": "Подтверждение опыта (акты, договоры)",
+    "staff": "Квалификация персонала",
+    "equipment": "Техника и оборудование",
+    "guarantee": "Банковская гарантия / обеспечение",
+    "other": "Прочее",
+}
+
+
+class Document(Base):
+    """Библиотека документов компании: хранится в базе, со сроком действия."""
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(300))
+    kind: Mapped[str] = mapped_column(String(30), default="other")
+    filename: Mapped[str] = mapped_column(String(300), default="")
+    mime: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    reminded_30d: Mapped[bool] = mapped_column(Boolean, default=False)
+    reminded_7d: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LoginCode(Base):
+    """Вход на сайт: сайт показывает код, пользователь подтверждает его в Telegram-боте."""
+    __tablename__ = "login_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nonce: Mapped[str] = mapped_column(String(64), unique=True)
+    code: Mapped[str] = mapped_column(String(6), index=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class UpgradeRequest(Base):
+    """Заявка на подключение тарифа. Подтверждает админ командой /grant в боте."""
+    __tablename__ = "upgrade_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    plan: Mapped[str] = mapped_column(String(20))
+    months: Mapped[int] = mapped_column(Integer, default=1)
+    contact: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(20), default="new")  # new / done / cancelled
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 engine = create_async_engine(config.DATABASE_URL, pool_pre_ping=True)
 Session = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -143,9 +212,36 @@ def configure(url: str) -> None:
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
 
+def _add_missing_columns(conn) -> list[str]:
+    """Простая миграция: добавляет новые колонки в уже существующие таблицы (create_all этого не делает)."""
+    insp = inspect(conn)
+    added = []
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in existing:
+                continue
+            ddl = f'ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(conn.dialect)}'
+            if col.server_default is not None:
+                default = col.server_default.arg
+                if isinstance(col.type, Boolean):
+                    default = "false" if conn.dialect.name == "postgresql" and default == "0" else default
+                ddl += f" DEFAULT '{default}'" if not str(default).isdigit() and default not in ("false", "true") else f" DEFAULT {default}"
+            conn.execute(text(ddl))
+            added.append(f"{table.name}.{col.name}")
+    return added
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        added = await conn.run_sync(_add_missing_columns)
+    if added:
+        import logging
+
+        logging.getLogger(__name__).info("Миграция: добавлены колонки %s", ", ".join(added))
 
 
 async def session() -> AsyncIterator[AsyncSession]:

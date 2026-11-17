@@ -32,10 +32,12 @@
     return t ? "Bearer " + t : "";
   }
   async function api(path, opts = {}) {
+    const isForm = opts.body instanceof FormData;
+    const headers = { Authorization: authHeader() };
+    if (!isForm) headers["Content-Type"] = "application/json";
     const res = await fetch("/api" + path, {
-      method: opts.method || "GET",
-      headers: { "Content-Type": "application/json", Authorization: authHeader() },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      method: opts.method || "GET", headers,
+      body: opts.body ? (isForm ? opts.body : JSON.stringify(opts.body)) : undefined,
     });
     if (!res.ok) {
       let msg = "Ошибка " + res.status;
@@ -44,6 +46,7 @@
     }
     return res.json();
   }
+  function setToken(t) { try { t ? localStorage.setItem("kyran_token", t) : localStorage.removeItem("kyran_token"); } catch (_) {} }
 
   // ── Форматирование ──────────────────────────────
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -89,6 +92,11 @@
     : `<div class="match" title="Совпадение с профилем компании"><span class="match-num">${score}%</span><span class="match-bar"><i style="--p:${score}"></i></span></div>`;
   const stageTag = (st) => st ? `<span class="tag stage ${st === "won" ? "won" : st === "lost" ? "lost" : ""}">${esc(STAGE_NAME[st] || st)}</span>` : "";
 
+  function initials(u) {
+    const name = (u.company_name || u.name || "Kyran").replace(/[«»"'“”]/g, " ").replace(/^\s*(ТОО|ИП|АО|ТДО|LLP)\s+/i, "");
+    return name.trim().split(/\s+/).filter((w) => /[\p{L}\d]/u.test(w[0])).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "K";
+  }
+
   // ── Статус в боковой панели ─────────────────────
   function paintStatus() {
     const f = state.me.features;
@@ -98,6 +106,11 @@
     document.getElementById("ai-dot").className = "dot " + (f.ai ? "on" : "");
     document.getElementById("ai-text").textContent = f.ai ? "ИИ-модуль активен" : "ИИ-модуль не подключён";
     document.getElementById("demo-strip").hidden = !f.demo;
+    const u = state.me.user, p = state.me.plan;
+    const box = document.getElementById("user-box");
+    box.innerHTML = `<span class="avatar">${esc(initials(u))}</span><span class="user-meta"><strong>${esc(u.company_name || u.name || "Моя компания")}</strong>
+      <span class="plan-chip ${p.active ? "" : "off"}">${esc(p.name)}${p.until ? " · до " + esc(dateShort(p.until)) : ""}</span></span>`;
+    box.hidden = false;
   }
   async function loadMe() { state.me = await api("/me"); paintStatus(); return state.me; }
 
@@ -217,7 +230,7 @@
     const leftPct = l.hours_left == null ? 100 : Math.max(2, Math.min(100, (l.hours_left / (14 * 24)) * 100));
     const docs = (l.documents || []).filter((d) => d.url);
     view.innerHTML = `
-      <div class="crumbs"><a href="#feed">Тендеры</a> / Закупка</div>
+      <div class="crumbs"><a href="#feed">Закупки</a> / Карточка закупки</div>
       <header class="detail-head">
         <h1>${esc(l.title)}</h1>
         <p class="page-sub">${esc(l.customer || "Заказчик не указан")}</p>
@@ -239,6 +252,11 @@
               </dl>
               ${l.reason ? `<p class="reason">Почему подходит: ${esc(l.reason)}</p>` : ""}
             </div>
+          </section>
+
+          <section class="panel" id="ready-panel" hidden>
+            <div class="panel-head"><h2>Готовность к заявке</h2><span id="ready-sum" class="ready-sum"></span></div>
+            <div id="ready"></div>
           </section>
 
           <section class="panel" id="analysis-panel">
@@ -263,10 +281,13 @@
               <textarea id="note" class="textarea" placeholder="Цена участия, контакты, что подготовить">${esc(data.note)}</textarea></div>
             <div class="form-actions"><button class="btn" data-act="hide">Скрыть из подборки</button></div>
           </div></section>
+          ${calcPanel(l)}
         </aside>
       </div>`;
 
     renderAnalysis(id, data.analysis, data.ai);
+    if (data.analysis) loadReadiness(id);
+    bindCalc(l);
     const stage = view.querySelector("#stage");
     const note = view.querySelector("#note");
     stage.addEventListener("change", async () => {
@@ -333,23 +354,227 @@
     box.innerHTML = `<div class="loading"><span class="spinner"></span>Анализ условий закупки и документации…</div>`;
     try {
       const { analysis } = await api(`/lots/${id}/analyze?refresh=${refresh}`, { method: "POST" });
-      haptic(); renderAnalysis(id, analysis, true);
+      haptic(); renderAnalysis(id, analysis, true); loadReadiness(id); loadMe().catch(() => {});
     } catch (e) {
-      box.innerHTML = `<div class="panel-body"><p class="desc">${esc(e.message)}</p></div>`;
-      document.getElementById("analysis-action").innerHTML = `<button class="btn">Повторить</button>`;
-      document.querySelector("#analysis-action button").addEventListener("click", () => runAnalysis(id, refresh));
+      box.innerHTML = `<div class="panel-body"><p class="desc">${esc(e.message)}</p>${e.status === 402 ? `<p style="margin-top:12px"><a class="btn btn-primary" href="#profile/plan">Выбрать тариф</a></p>` : ""}</div>`;
+      if (e.status !== 402) {
+        document.getElementById("analysis-action").innerHTML = `<button class="btn">Повторить</button>`;
+        document.querySelector("#analysis-action button").addEventListener("click", () => runAnalysis(id, refresh));
+      }
     }
   }
 
-  // ── Воронка ─────────────────────────────────────
+
+  // ── Готовность к заявке ─────────────────────────
+  const READY = { ready: ["ok", "Есть"], expiring: ["warn", "Истекает"], expired: ["bad", "Просрочен"], missing: ["bad", "Нет в библиотеке"] };
+  async function loadReadiness(id) {
+    const panel = document.getElementById("ready-panel");
+    if (!panel) return;
+    let r;
+    try { r = await api(`/lots/${id}/readiness`); } catch (_) { return; }
+    if (!r.total) return;
+    panel.hidden = false;
+    const pct = Math.round((r.ready / r.total) * 100);
+    document.getElementById("ready-sum").innerHTML = `<span class="ready-num">${r.ready} из ${r.total}</span><span class="match-bar"><i style="--p:${pct}"></i></span>`;
+    document.getElementById("ready").innerHTML = `<table class="a-table ready-table">${r.items.map((x) => {
+      const [cls, label] = READY[x.status] || READY.missing;
+      const doc = x.document ? `<div class="cell-sub">${esc(x.document.title)}${x.document.expires_at ? " · до " + esc(dateShort(x.document.expires_at)) : ""}</div>` : "";
+      return `<tr><td>${esc(x.requirement)}${doc}</td><td class="right"><span class="status ${cls}">${label}</span></td></tr>`;
+    }).join("")}</table>
+    <div class="a-foot">Документы сопоставлены с вашей библиотекой автоматически, срок действия проверен на дату окончания приёма заявок.
+      <a href="#documents">Открыть библиотеку</a></div>`;
+  }
+
+  // ── Калькулятор цены участия ────────────────────
+  function calcPanel(l) {
+    if (!l.amount) return "";
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem("kyran_calc_" + l.id) || "{}"); } catch (_) {}
+    const v = (k, d) => saved[k] ?? d;
+    return `<section class="panel"><div class="panel-head"><h2>Расчёт цены</h2></div><div class="panel-body calc">
+      <div class="calc-grid">
+        <label><span class="field-label">Себестоимость, ₸</span><input class="input" data-c="cost" inputmode="numeric" value="${esc(v("cost", ""))}" placeholder="${esc(Math.round(l.amount * 0.75).toLocaleString("ru-RU"))}"></label>
+        <label><span class="field-label">Наценка, %</span><input class="input" data-c="markup" inputmode="decimal" value="${esc(v("markup", 15))}"></label>
+        <label><span class="field-label">Обеспечение заявки, %</span><input class="input" data-c="bid" inputmode="decimal" value="${esc(v("bid", 1))}"></label>
+        <label><span class="field-label">Обеспечение договора, %</span><input class="input" data-c="contract" inputmode="decimal" value="${esc(v("contract", 3))}"></label>
+      </div>
+      <dl class="calc-out" id="calc-out"></dl>
+      <p class="hint">Проценты обеспечения проверяйте в документации конкретной закупки.</p>
+    </div></section>`;
+  }
+  function bindCalc(l) {
+    const out = document.getElementById("calc-out");
+    if (!out) return;
+    const num = (x) => parseFloat(String(x).replace(/\s/g, "").replace(",", ".")) || 0;
+    const calc = () => {
+      const vals = {};
+      view.querySelectorAll("[data-c]").forEach((i) => (vals[i.dataset.c] = i.value));
+      try { localStorage.setItem("kyran_calc_" + l.id, JSON.stringify(vals)); } catch (_) {}
+      const cost = num(vals.cost), price = cost * (1 + num(vals.markup) / 100);
+      if (!cost) { out.innerHTML = `<dt>Введите себестоимость</dt><dd></dd>`; return; }
+      const drop = l.amount ? (1 - price / l.amount) * 100 : 0;
+      const over = price > l.amount;
+      out.innerHTML = `
+        <dt>Ваша цена</dt><dd class="${over ? "bad" : ""}">${esc(money(price))}</dd>
+        <dt>Снижение от суммы закупки</dt><dd class="${over ? "bad" : ""}">${over ? "выше суммы закупки" : drop.toFixed(1) + "%"}</dd>
+        <dt>Прибыль</dt><dd>${esc(money(price - cost))}</dd>
+        <dt>Обеспечение заявки</dt><dd>${esc(money(l.amount * num(vals.bid) / 100))}</dd>
+        <dt>Обеспечение договора</dt><dd>${esc(money(price * num(vals.contract) / 100))}</dd>`;
+    };
+    view.querySelectorAll("[data-c]").forEach((i) => i.addEventListener("input", calc));
+    calc();
+  }
+
+  // ── Документы ───────────────────────────────────
+  const DOC_STATUS = { valid: ["ok", "Действует"], expiring: ["warn", "Истекает"], expired: ["bad", "Просрочен"], no_term: ["", "Бессрочный"] };
+  function fileSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + " МБ" : b ? Math.max(1, Math.round(b / 1024)) + " КБ" : ""; }
+
+  async function renderDocuments() {
+    view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
+    const { items, kinds } = await api("/documents");
+    const p = state.me.plan;
+    const bad = items.filter((d) => d.status === "expired").length, warn = items.filter((d) => d.status === "expiring").length;
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Документы компании</h1>
+        <p class="page-sub">Справки, лицензии, сертификаты и подтверждение опыта в одном месте. Kyran сверяет их с требованиями каждой закупки и напоминает в Telegram за 30 и 7 дней до окончания срока.</p></div>
+        <button class="btn btn-primary" id="add-doc">Добавить документ</button></div>
+      <section class="kpis kpis-3">
+        <div class="kpi"><div class="kpi-label">В библиотеке</div><div class="kpi-value">${items.length}<small> из ${p.limits.documents}</small></div></div>
+        <div class="kpi"><div class="kpi-label">Истекают в течение 30 дней</div><div class="kpi-value ${warn ? "warn" : ""}">${warn}</div></div>
+        <div class="kpi"><div class="kpi-label">Просрочены</div><div class="kpi-value ${bad ? "bad" : ""}">${bad}</div></div>
+      </section>
+      <section class="panel" id="doc-form-panel" hidden></section>
+      <div class="table-wrap">${items.length ? `<table class="grid docs stack">
+        <thead><tr><th>Документ</th><th>Тип</th><th>Действует до</th><th>Статус</th><th class="right"></th></tr></thead>
+        <tbody>${items.map((d) => { const [cls, label] = DOC_STATUS[d.status]; return `<tr>
+          <td><div class="cell-title">${esc(d.title)}</div><div class="cell-sub">${d.filename ? esc(d.filename) + " · " + fileSize(d.size) : "Без файла"}</div></td>
+          <td class="cell-sub">${esc(d.kind_name)}</td>
+          <td><div class="date">${d.expires_at ? esc(dateShort(d.expires_at)) : "—"}</div></td>
+          <td><span class="status ${cls}">${label}</span></td>
+          <td class="right nowrap">${d.filename ? `<button class="btn btn-sm" data-dl="${d.id}">Скачать</button>` : ""}
+            <button class="btn btn-sm" data-edit="${d.id}">Изменить</button> <button class="btn btn-sm btn-ghost" data-del="${d.id}" aria-label="Удалить">Удалить</button></td></tr>`; }).join("")}</tbody></table>`
+        : `<div class="empty"><h2>Библиотека пуста</h2><p>Загрузите справку об отсутствии налоговой задолженности, свидетельство о регистрации, лицензии и акты выполненных работ — и Kyran будет показывать готовность к каждой закупке.</p></div>`}</div>`;
+
+    const formPanel = view.querySelector("#doc-form-panel");
+    const openForm = (doc) => {
+      formPanel.hidden = false;
+      const val = (k) => esc(doc ? (k.endsWith("_at") ? (doc[k] || "").slice(0, 10) : doc[k]) : "");
+      formPanel.innerHTML = `<div class="panel-head"><h2>${doc ? "Изменить документ" : "Новый документ"}</h2></div><form class="panel-body form" id="doc-form">
+        <div class="form-grid">
+          <label class="form-row"><span class="title">Название</span><input class="input" name="title" required maxlength="300" value="${val("title")}" placeholder="Справка об отсутствии налоговой задолженности"></label>
+          <label class="form-row"><span class="title">Тип</span><select class="select" name="kind">${Object.entries(kinds).map(([k, n]) => `<option value="${k}" ${doc && doc.kind === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+          <label class="form-row"><span class="title">Дата выдачи</span><input class="input" type="date" name="issued_at" value="${val("issued_at")}"></label>
+          <label class="form-row"><span class="title">Действует до</span><input class="input" type="date" name="expires_at" value="${val("expires_at")}"><span class="hint">Оставьте пустым для бессрочных</span></label>
+        </div>
+        ${doc ? "" : `<label class="form-row"><span class="title">Файл</span><input class="input" type="file" name="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip,.rar,.txt"><span class="hint">PDF, Word, Excel, изображения или архив, до 15 МБ</span></label>`}
+        <label class="form-row"><span class="title">Комментарий</span><input class="input" name="note" maxlength="2000" value="${val("note")}" placeholder="Например: номер лицензии, вид работ"></label>
+        <div class="form-actions"><button class="btn btn-primary" type="submit">${doc ? "Сохранить" : "Загрузить"}</button><button class="btn" type="button" data-cancel>Отмена</button></div>
+      </form>`;
+      formPanel.querySelector("[data-cancel]").onclick = () => (formPanel.hidden = true);
+      formPanel.querySelector("form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target), btn = e.target.querySelector("[type=submit]");
+        btn.disabled = true;
+        try {
+          if (doc) await api("/documents/" + doc.id, { method: "PUT", body: Object.fromEntries(fd) });
+          else await api("/documents", { method: "POST", body: fd });
+          toast(doc ? "Документ сохранён" : "Документ добавлен"); await loadMe(); renderDocuments();
+        } catch (err) { toast(err.message); btn.disabled = false; }
+      });
+      formPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    view.querySelector("#add-doc").addEventListener("click", () => openForm(null));
+    view.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => openForm(items.find((d) => d.id == b.dataset.edit))));
+    view.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Удалить документ из библиотеки?")) return;
+      await api("/documents/" + b.dataset.del, { method: "DELETE" }); toast("Документ удалён"); loadMe(); renderDocuments();
+    }));
+    view.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", async () => {
+      const res = await fetch(`/api/documents/${b.dataset.dl}/file`, { headers: { Authorization: authHeader() } });
+      if (!res.ok) return toast("Не удалось скачать файл");
+      const d = items.find((x) => x.id == b.dataset.dl);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(await res.blob()); a.download = d.filename || "document"; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }));
+  }
+
+  // ── Разборы ─────────────────────────────────────
+  async function renderAnalyses() {
+    view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
+    const { items } = await api("/analyses");
+    const p = state.me.plan;
+    view.innerHTML = `
+      <div class="page-head"><div><h1>ИИ-разборы</h1>
+        <p class="page-sub">Заключения по закупкам: требования, документы, риски. В этом месяце использовано ${p.usage.analyses} из ${p.limits.analyses}.</p></div></div>
+      <div class="table-wrap">${items.length ? `<table class="grid stack">
+        <thead><tr><th>Заключение</th><th>Закупка</th><th class="right">Сумма</th><th>Дата разбора</th></tr></thead>
+        <tbody>${items.map((x) => `<tr data-id="${x.lot.id}">
+          <td><span class="verdict-chip ${esc(x.verdict)}">${VERDICT[x.verdict] || VERDICT.consider}</span>${x.score != null ? `<div class="cell-sub">${esc(x.score)}%</div>` : ""}</td>
+          <td><div class="cell-title">${esc(x.lot.title)}</div><div class="cell-sub clamp">${esc(x.summary)}</div></td>
+          <td class="right"><span class="amount">${esc(moneyShort(x.lot.amount))}</span></td>
+          <td class="cell-sub">${esc(dateShort(x.created_at))}</td></tr>`).join("")}</tbody></table>`
+        : `<div class="empty"><h2>Разборов пока нет</h2><p>Откройте любую закупку и нажмите «Выполнить разбор» — заключение сохранится здесь.</p></div>`}</div>`;
+    view.querySelectorAll("tbody tr").forEach((tr) => tr.addEventListener("click", () => (location.hash = "#lot/" + tr.dataset.id)));
+  }
+
+  // ── Вход по коду ────────────────────────────────
+  let pollTimer = null;
+  async function renderLogin(message) {
+    clearInterval(pollTimer);
+    document.body.classList.add("auth");
+    view.innerHTML = `<div class="login">
+      <div class="login-card">
+        <svg class="brand-mark big" viewBox="0 0 32 32" aria-hidden="true"><path d="M1 10.5c5.5-.4 9.6 1.8 13 5.6l.6-2.3c.3-1 .8-1.5 1.4-1.5s1.1.5 1.4 1.5l.6 2.3c3.4-3.8 7.5-6 13-5.6-4.6 1.6-8.2 4.6-10.6 8.8L18 23.5l-2 3-2-3-1.4-4.2C10.2 15.1 5.6 12.1 1 10.5z" fill="currentColor"/></svg>
+        <h1>Вход в Kyran</h1>
+        <p class="lead">${esc(message || "Вход без пароля — через Telegram. Код подтверждает, что аккаунт ваш.")}</p>
+        <div id="login-box"><div class="loading"><span class="spinner"></span>Получаем код…</div></div>
+      </div>
+      <p class="login-foot">Kyran — подбор и подготовка к участию в госзакупках Казахстана</p></div>`;
+    let d;
+    try { d = await api("/auth/start", { method: "POST" }); }
+    catch (e) { document.getElementById("login-box").innerHTML = `<p class="desc">${esc(e.message)}</p>`; return; }
+    const box = document.getElementById("login-box");
+    box.innerHTML = `
+      <div class="code" aria-label="Код входа">${d.code.split("").map((c) => `<span>${c}</span>`).join("")}</div>
+      <a class="btn btn-primary btn-block" href="${esc(d.link)}" target="_blank" rel="noopener">Подтвердить в Telegram</a>
+      <ol class="login-steps"><li>Нажмите кнопку — откроется бот @${esc(d.bot)}</li><li>Нажмите «Запустить» или отправьте боту этот код</li><li>Страница откроется автоматически</li></ol>
+      <p class="hint" id="login-timer"></p>`;
+    const until = Date.now() + d.expires_in * 1000;
+    pollTimer = setInterval(async () => {
+      const sec = Math.round((until - Date.now()) / 1000);
+      const t = document.getElementById("login-timer");
+      if (!t) return clearInterval(pollTimer);
+      if (sec <= 0) { clearInterval(pollTimer); return renderLogin("Код устарел — вот новый."); }
+      t.textContent = `Код действует ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+      if (sec % 2) return;
+      try {
+        const r = await api("/auth/poll?nonce=" + encodeURIComponent(d.nonce));
+        if (r.token) {
+          clearInterval(pollTimer); setToken(r.token); document.body.classList.remove("auth");
+          state.me = null; location.hash = "#feed"; route();
+        }
+      } catch (e) { if (e.status === 410) { clearInterval(pollTimer); renderLogin("Код устарел — вот новый."); } }
+    }, 1000);
+  }
+
+  // ── Заявки (воронка + сроки) ────────────────────
   async function renderPipeline() {
     view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
-    const { columns } = await api("/pipeline");
+    const [{ columns }, dl] = await Promise.all([api("/pipeline"), api("/deadlines")]);
     const total = Object.values(columns).reduce((a, c) => a + c.length, 0);
+    const soon = dl.lots.slice(0, 6);
+    const deadlinesHtml = soon.length || dl.documents.length ? `<section class="panel deadlines"><div class="panel-head"><h2>Ближайшие сроки</h2><span class="hint">Напоминания приходят в Telegram за 3 дня и за сутки</span></div>
+      <div class="dl-list">${soon.map((x) => { const left = timeLeft(x.hours_left); const d = new Date(x.deadline);
+        return `<a class="dl" href="#lot/${x.id}"><span class="dl-date"><b>${d.toLocaleString("ru-RU", { day: "numeric", timeZone: TZ })}</b>${d.toLocaleString("ru-RU", { month: "short", timeZone: TZ })}</span>
+          <span class="dl-body"><span class="cell-title">${esc(x.title)}</span><span class="cell-sub">${esc(STAGE_NAME[x.stage])} · ${esc(moneyShort(x.amount))}</span></span><span class="left ${left.cls}">${esc(left.text)}</span></a>`; }).join("")}
+      ${dl.documents.map((x) => `<a class="dl" href="#documents"><span class="dl-date doc"><b>!</b>док.</span><span class="dl-body"><span class="cell-title">${esc(x.title)}</span>
+          <span class="cell-sub">${x.status === "expired" ? "Просрочен" : "Истекает"} ${esc(dateShort(x.expires_at))}</span></span><span class="status ${x.status === "expired" ? "bad" : "warn"}">${x.status === "expired" ? "Просрочен" : "Обновить"}</span></a>`).join("")}</div></section>` : "";
     view.innerHTML = `
-      <div class="page-head"><div><h1>Воронка</h1><p class="page-sub">${total
+      <div class="page-head"><div><h1>Заявки</h1><p class="page-sub">${total
         ? `${total} ${plural(total, "закупка", "закупки", "закупок")} в работе. Статус меняется в карточке закупки.`
-        : "Добавьте закупку в воронку из её карточки — так вы будете вести её до результата."}</p></div></div>
+        : "Добавьте закупку в работу из её карточки — так вы будете вести её до результата."}</p></div></div>
+      ${deadlinesHtml}
       <div class="board">${STAGES.map(([k, n]) => {
         const items = columns[k] || [];
         const sum = items.reduce((a, x) => a + (x.amount || 0), 0);
@@ -358,36 +583,6 @@
             <div class="card-meta"><span class="amount">${esc(moneyShort(x.amount))}</span><span class="left ${left.cls}">${esc(left.text)}</span></div></a>`; }).join("") || `<div class="col-empty">Нет закупок</div>`}
           ${sum ? `<div class="col-sum">Итого ${esc(moneyShort(sum))}</div>` : ""}</section>`;
       }).join("")}</div>`;
-  }
-
-  // ── Мониторинг сайтов ───────────────────────────
-  async function renderSites() {
-    view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
-    const { items, ai } = await api("/monitors");
-    view.innerHTML = `
-      <div class="page-head"><div><h1>Мониторинг сайтов</h1>
-        <p class="page-sub">Отслеживание закупок на площадках без API: сайты заказчиков, корпоративные порталы, разделы «Тендеры». ${ai
-          ? "Новые закупки извлекаются автоматически." : "При изменении страницы придёт уведомление."}</p></div></div>
-      <form class="toolbar" id="site-form">
-        <input class="input" style="flex:1;min-width:240px" name="url" type="url" inputmode="url" placeholder="https://example.kz/tenders" required aria-label="Адрес страницы">
-        <button class="btn btn-primary" type="submit">Добавить</button>
-      </form>
-      <section class="panel sites">${items.length ? items.map((m) => `
-        <div class="site"><div><div class="site-title">${esc(m.title)}</div><div class="site-url">${esc(m.url)}</div>
-          <div class="site-status ${m.error ? "err" : ""}">${m.error ? "Ошибка доступа: " + esc(m.error)
-            : m.last_change ? "Последнее изменение: " + esc(dateTime(m.last_change)) : "Изменений не обнаружено"}</div></div>
-          <button class="btn" data-del="${m.id}">Удалить</button></div>`).join("")
-        : `<div class="empty"><h2>Нет отслеживаемых страниц</h2><p>Добавьте адрес страницы с закупками — Kyran будет проверять её несколько раз в день.</p></div>`}</section>`;
-    view.querySelector("#site-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const btn = e.target.querySelector("button");
-      btn.disabled = true; btn.textContent = "Проверка…";
-      try { await api("/monitors", { method: "POST", body: { url: e.target.url.value } }); toast("Страница добавлена"); renderSites(); }
-      catch (err) { toast(err.message); btn.disabled = false; btn.textContent = "Добавить"; }
-    });
-    view.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
-      await api("/monitors/" + b.dataset.del, { method: "DELETE" }); toast("Страница удалена"); renderSites();
-    }));
   }
 
   // ── Профиль и онбординг ─────────────────────────
@@ -449,32 +644,132 @@
     });
   }
 
-  function renderProfile() {
+  const PROFILE_TABS = [["company", "Компания"], ["matching", "Подбор закупок"], ["notify", "Уведомления"], ["plan", "Тариф"], ["security", "Вход и безопасность"]];
+
+  function renderProfile(tab) {
+    tab = PROFILE_TABS.some(([k]) => k === tab) ? tab : "company";
     const u = state.me.user;
     view.innerHTML = `
-      <div class="page-head"><div><h1>Профиль компании</h1><p class="page-sub">По этим данным Kyran подбирает и оценивает закупки.</p></div></div>
-      <section class="panel"><div class="panel-body"><div class="form">
-        <div class="form-row"><label class="title">Направления деятельности</label><p class="hint">Товары и работы, которые поставляет компания</p><div id="kw"></div></div>
-        <div class="form-row"><label class="title" for="amount">Диапазон сумм</label><div id="am"></div></div>
-        <div class="form-row"><label class="title" for="about">О компании</label><p class="hint">Опыт, лицензии, техника, регионы работы. Учитывается ИИ при оценке.</p>
-          <textarea id="about" class="textarea" maxlength="2000">${esc(u.about)}</textarea></div>
-        <div class="form-row"><label class="title" for="bin">БИН</label><input id="bin" class="input" style="max-width:220px" inputmode="numeric" maxlength="12" value="${esc(u.company_bin)}" placeholder="12 цифр"></div>
-        <label class="toggle"><input type="checkbox" id="notify" ${u.notify ? "checked" : ""}><span>Уведомления в Telegram</span></label>
-        <div class="form-actions"><button class="btn btn-primary" id="save">Сохранить</button></div>
-      </div></div></section>
-      <p class="page-sub" style="margin-top:16px">Доступ с компьютера: отправьте боту Kyran команду /web — вы получите персональную ссылку.</p>`;
-    const kw = keywordEditor(u.keywords); view.querySelector("#kw").append(kw);
-    const am = amountSelect(u.min_amount, u.max_amount); view.querySelector("#am").append(am);
-    view.querySelector("#save").addEventListener("click", async (e) => {
-      const bin = view.querySelector("#bin").value.replace(/\D/g, "");
+      <div class="profile-head">
+        <span class="avatar xl">${esc(initials(u))}</span>
+        <div><h1>${esc(u.company_name || u.name || "Моя компания")}</h1>
+          <p class="page-sub">${u.company_bin ? "БИН " + esc(u.company_bin) + " · " : ""}${u.username ? "@" + esc(u.username) : "Telegram ID " + esc(u.id)}</p></div>
+      </div>
+      <div class="subnav" role="tablist">${PROFILE_TABS.map(([k, n]) => `<a href="#profile/${k}" role="tab" aria-selected="${k === tab}">${n}</a>`).join("")}</div>
+      <div id="ptab"></div>`;
+    const box = view.querySelector("#ptab");
+    ({ company: profCompany, matching: profMatching, notify: profNotify, plan: profPlan, security: profSecurity })[tab](box, u);
+  }
+
+  async function saveMe(btn, body, msg) {
+    btn.disabled = true;
+    try { await api("/me", { method: "PUT", body }); await loadMe(); haptic(); toast(msg || "Сохранено"); }
+    catch (err) { toast(err.message); }
+    btn.disabled = false;
+  }
+
+  function profCompany(box, u) {
+    box.innerHTML = `<section class="panel"><div class="panel-body"><div class="form">
+      <div class="form-grid">
+        <label class="form-row"><span class="title">Название компании</span><input id="cname" class="input" maxlength="300" value="${esc(u.company_name)}" placeholder="ТОО «Название»"></label>
+        <label class="form-row"><span class="title">БИН / ИИН</span><input id="bin" class="input" inputmode="numeric" maxlength="12" value="${esc(u.company_bin)}" placeholder="12 цифр"></label>
+      </div>
+      <label class="form-row"><span class="title">О компании</span><span class="hint">Опыт, лицензии, техника, штат, регионы работы. ИИ учитывает это при оценке закупок и в разборах.</span>
+        <textarea id="about" class="textarea" rows="6" maxlength="2000">${esc(u.about)}</textarea></label>
+      <div class="form-actions"><button class="btn btn-primary" id="save">Сохранить</button></div>
+    </div></div></section>`;
+    box.querySelector("#save").addEventListener("click", (e) => {
+      const bin = box.querySelector("#bin").value.replace(/\D/g, "");
       if (bin && bin.length !== 12) return toast("БИН должен содержать 12 цифр");
-      e.target.disabled = true;
-      try {
-        await api("/me", { method: "PUT", body: { keywords: kw.value(), ...am.value_(), about: view.querySelector("#about").value,
-          company_bin: bin, notify: view.querySelector("#notify").checked } });
-        await loadMe(); haptic(); toast("Профиль сохранён, подбор обновлён");
-      } catch (err) { toast(err.message); }
-      e.target.disabled = false;
+      saveMe(e.target, { company_bin: bin, company_name: box.querySelector("#cname").value.trim(), about: box.querySelector("#about").value });
+    });
+  }
+
+  function profMatching(box, u) {
+    box.innerHTML = `<section class="panel"><div class="panel-body"><div class="form">
+      <div class="form-row"><span class="title">Направления деятельности</span><span class="hint">Товары и работы, которые поставляет компания. Каждое направление — отдельной фразой.</span><div id="kw"></div></div>
+      <div class="form-row"><span class="title">Диапазон сумм</span><div id="am"></div></div>
+      <div class="form-actions"><button class="btn btn-primary" id="save">Сохранить и обновить подбор</button></div>
+    </div></div></section>`;
+    const kw = keywordEditor(u.keywords); box.querySelector("#kw").append(kw);
+    const am = amountSelect(u.min_amount, u.max_amount); box.querySelector("#am").append(am);
+    box.querySelector("#save").addEventListener("click", (e) => saveMe(e.target, { keywords: kw.value(), ...am.value_() }, "Подбор обновлён"));
+  }
+
+  function profNotify(box, u) {
+    const bot = state.me.bot;
+    box.innerHTML = `<section class="panel"><div class="panel-body"><div class="form">
+      <label class="toggle"><input type="checkbox" id="notify" ${u.notify ? "checked" : ""}><span>Присылать новые подходящие закупки в Telegram</span></label>
+      <div class="info-list">
+        <div><strong>Срочные закупки</strong><span>Сразу, когда появляется закупка со сроком подачи меньше 3 дней</span></div>
+        <div><strong>Ежедневная подборка</strong><span>Каждое утро в 9:00 — лучшие новые закупки</span></div>
+        <div><strong>Сроки по заявкам</strong><span>За 3 дня и за сутки до окончания приёма заявок по закупкам в работе</span></div>
+        <div><strong>Документы</strong><span>За 30 и 7 дней до окончания срока действия</span></div>
+        <div><strong>Сайты заказчиков</strong><span>Мониторинг страниц закупок без API — команды /watch, /sites и /unwatch в боте</span></div>
+      </div>
+      <div class="form-actions"><button class="btn btn-primary" id="save">Сохранить</button>${bot ? `<a class="btn" href="https://t.me/${esc(bot)}" target="_blank" rel="noopener">Открыть бота</a>` : ""}</div>
+    </div></div></section>`;
+    box.querySelector("#save").addEventListener("click", (e) => saveMe(e.target, { notify: box.querySelector("#notify").checked }));
+  }
+
+  function profPlan(box) {
+    const p = state.me.plan;
+    const bar = (used, lim) => `<span class="match-bar wide"><i style="--p:${Math.min(100, Math.round((used / lim) * 100))}"></i></span>`;
+    box.innerHTML = `
+      <section class="panel"><div class="panel-body plan-now">
+        <div><span class="field-label">Текущий тариф</span><div class="plan-name">${esc(p.name)}</div>
+          <div class="cell-sub">${p.until ? (p.active ? "Действует до " : "Закончился ") + esc(dateShort(p.until)) : ""}</div></div>
+        <div class="usage"><div><span>ИИ-разборы в этом месяце</span><b>${p.usage.analyses} / ${p.limits.analyses}</b></div>${bar(p.usage.analyses, p.limits.analyses)}</div>
+        <div class="usage"><div><span>Документы в библиотеке</span><b>${p.usage.documents} / ${p.limits.documents}</b></div>${bar(p.usage.documents, p.limits.documents)}</div>
+      </div></section>
+      <div class="plans">${p.catalog.map((c) => `<section class="plan ${c.code === "pro" ? "featured" : ""} ${c.code === p.code && p.active ? "current" : ""}">
+        ${c.code === "pro" ? `<span class="plan-flag">Выбор большинства</span>` : ""}
+        <h3>${esc(c.name)}</h3><div class="price">${c.price.toLocaleString("ru-RU")} ₸<small>/мес</small></div>
+        <ul>${c.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
+        ${c.code === p.code && p.active ? `<button class="btn btn-block" data-plan="${c.code}">Продлить</button>` : `<button class="btn ${c.code === "pro" ? "btn-primary" : ""} btn-block" data-plan="${c.code}">Подключить</button>`}
+      </section>`).join("")}</div>
+      <p class="hint" style="margin-top:12px">Оплата по счёту для ТОО и ИП или через Kaspi. При оплате за 12 месяцев — 2 месяца в подарок.</p>
+      <section class="panel" id="req" hidden></section>`;
+    box.querySelectorAll("[data-plan]").forEach((b) => b.addEventListener("click", () => {
+      const c = p.catalog.find((x) => x.code === b.dataset.plan);
+      const req = box.querySelector("#req"); req.hidden = false;
+      req.innerHTML = `<div class="panel-head"><h2>Подключение тарифа «${esc(c.name)}»</h2></div><form class="panel-body form">
+        <div class="form-grid">
+          <label class="form-row"><span class="title">Срок</span><select class="select" name="months"><option value="1">1 месяц — ${c.price.toLocaleString("ru-RU")} ₸</option>
+            <option value="3">3 месяца — ${(c.price * 3).toLocaleString("ru-RU")} ₸</option><option value="12">12 месяцев — ${(c.price * 10).toLocaleString("ru-RU")} ₸</option></select></label>
+          <label class="form-row"><span class="title">Телефон или e-mail для счёта</span><input class="input" name="contact" maxlength="200" placeholder="+7 7__ ___ __ __"></label>
+        </div>
+        <div class="form-actions"><button class="btn btn-primary" type="submit">Отправить заявку</button></div></form>`;
+      req.querySelector("form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        try {
+          const r = await api("/billing/request", { method: "POST", body: { plan: c.code, months: +fd.get("months"), contact: fd.get("contact") } });
+          req.innerHTML = `<div class="panel-body"><h3 style="margin:0 0 6px">Заявка №${r.id} принята</h3><p class="desc">${esc(r.payment_info)}</p></div>`;
+        } catch (err) { toast(err.message); }
+      });
+      req.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+  }
+
+  function profSecurity(box, u) {
+    box.innerHTML = `<section class="panel"><div class="panel-body"><div class="form">
+      <div class="info-list">
+        <div><strong>Способ входа</strong><span>Одноразовый код, подтверждаемый в Telegram. Пароль не хранится — его невозможно украсть или подобрать.</span></div>
+        <div><strong>Аккаунт Telegram</strong><span>${u.username ? "@" + esc(u.username) : "ID " + esc(u.id)}</span></div>
+        <div><strong>Срок сессии</strong><span>30 дней на каждом устройстве</span></div>
+      </div>
+      <div class="form-actions">
+        ${tg ? "" : `<button class="btn" id="logout">Выйти</button>`}
+        <button class="btn btn-danger" id="logout-all">Выйти на всех устройствах</button></div>
+    </div></div></section>`;
+    const lo = box.querySelector("#logout");
+    if (lo) lo.addEventListener("click", () => { setToken(null); state.me = null; renderLogin("Вы вышли из аккаунта."); });
+    box.querySelector("#logout-all").addEventListener("click", async () => {
+      if (!confirm("Завершить все сессии на сайте, включая эту?")) return;
+      await api("/auth/logout-all", { method: "POST" });
+      setToken(null); state.me = null;
+      if (tg) toast("Сессии в браузерах завершены"); else renderLogin("Все сессии завершены.");
     });
   }
 
@@ -490,21 +785,23 @@
     const [page, arg] = (location.hash.slice(1) || "feed").split("/");
     if (tg && page !== "lot") { tg.BackButton.hide(); tg.BackButton.offClick(goBack); }
     const tab = page === "lot" ? "feed" : page;
+    document.body.classList.remove("auth"); clearInterval(pollTimer);
     document.querySelectorAll("[data-tab]").forEach((a) => (a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
     window.scrollTo(0, 0);
     try {
       if (!state.me) await loadMe();
       if (page === "lot" && arg) return await renderLot(arg);
       if (page === "pipeline") return await renderPipeline();
-      if (page === "sites") return await renderSites();
-      if (page === "profile") return renderProfile();
+      if (page === "documents") return await renderDocuments();
+      if (page === "analyses") return await renderAnalyses();
+      if (page === "profile") return renderProfile(arg);
       return await renderFeed();
     } catch (e) {
-      if (e.status === 401) return noAccess(e.message.replace(/^Нет доступа: /, ""));
+      if (e.status === 401) { if (tg) return noAccess(e.message); setToken(null); state.me = null; return renderLogin(); }
       view.innerHTML = `<div class="empty"><h2>Не удалось загрузить данные</h2><p>${esc(e.message)}</p><p style="margin-top:12px"><button class="btn" onclick="location.reload()">Обновить</button></p></div>`;
     }
   }
 
   window.addEventListener("hashchange", route);
-  if (!authHeader()) noAccess(); else route();
+  if (!authHeader()) renderLogin(); else route();
 })();

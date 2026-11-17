@@ -14,12 +14,12 @@ from telegram.ext import (
     Application, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters,
 )
 
-from app import config, db
+from app import config, db, runtime
 from app.ai import agent, client as ai
 from app.api.auth import make_link_token
 from app.bot import texts as T
-from app.db import Lot, Match, User, utcnow
-from app.services import core, monitors
+from app.db import Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
+from app.services import billing, core, login, monitors
 from app.services.matcher import parse_keywords
 from app.sources.registry import SOURCES
 
@@ -65,7 +65,26 @@ async def load_user(update: Update) -> User:
 
 # ── Онбординг ──────────────────────────────────────────────
 
+async def confirm_login(update: Update, *, code: str | None = None, nonce: str | None = None) -> bool:
+    user = await load_user(update)
+    async with db.Session() as s:
+        ok = await login.bind(s, user.id, code=code, nonce=nonce)
+    if ok:
+        await reply(update, "Вход на сайт подтверждён. Вернитесь в браузер — страница откроется сама.\n\n"
+                            "Если входили не вы, нажмите /logout_all — это завершит все сессии на сайте.")
+    else:
+        await reply(update, "Код не найден или устарел. Обновите страницу входа на сайте и попробуйте снова.")
+    return ok
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    arg = (context.args or [""])[0] if context.args else ""
+    if arg.startswith("login_"):
+        await confirm_login(update, nonce=arg[6:])
+        user = await load_user(update)
+        if user.onboarded:
+            return ConversationHandler.END
+        await reply(update, "Чтобы начать получать подходящие закупки, ответьте на пару вопросов.")
     context.user_data.clear()
     await load_user(update)
     await reply(update, T.WELCOME)
@@ -161,7 +180,8 @@ async def web_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not config.PUBLIC_URL:
         await reply(update, "Веб-версия ещё не подключена.")
         return
-    token = make_link_token(update.effective_user.id)
+    user = await load_user(update)
+    token = make_link_token(user.id, version=user.token_version or 0)
     await reply(update, "Ссылка для компьютера (личная, не пересылайте, действует 30 дней):",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Открыть Kyran в браузере", url=f"{config.PUBLIC_URL}/app?t={token}")]]))
 
@@ -243,6 +263,106 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await reply(update, f"{users} пользователей ({onboarded} настроили)\n{lots} лотов ({open_lots} открыто)\n{srcs}\nИИ: {'вкл' if ai.available() else 'выкл'}")
 
 
+async def logout_all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        user.token_version = (user.token_version or 0) + 1
+        await s.commit()
+    await reply(update, "Все сессии на сайте завершены. Чтобы войти снова, получите код на странице входа.")
+
+
+async def plan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        used = await billing.usage(s, user)
+    plan, active, until = billing.current_plan(user)
+    until_s = aware(until).astimezone(config.TZ).strftime("%d.%m.%Y") if until else "—"
+    state = f"действует до {until_s}" if active else f"закончился {until_s}"
+    await reply(update, f"Тариф: <b>{plan.name}</b>, {state}\n"
+                        f"ИИ-разборы в этом месяце: {used['analyses']} из {plan.analyses}\n"
+                        f"Документы в библиотеке: {used['documents']} из {plan.documents}\n\n"
+                        "Сменить тариф можно на сайте: Профиль → Тариф.", reply_markup=open_app_markup("Открыть тарифы"))
+
+
+async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Админ: /grant <user_id> <start|pro|team> <месяцев>"""
+    if update.effective_user.id not in config.ADMIN_IDS:
+        return
+    try:
+        uid, plan, months = int(context.args[0]), context.args[1], int(context.args[2]) if len(context.args) > 2 else 1
+    except (IndexError, ValueError):
+        await reply(update, "Формат: /grant &lt;user_id&gt; &lt;start|pro|team&gt; &lt;месяцев&gt;")
+        return
+    async with db.Session() as s:
+        user = await s.get(User, uid)
+        if not user:
+            await reply(update, "Пользователь не найден.")
+            return
+        try:
+            billing.grant(user, plan, months)
+        except ValueError as e:
+            await reply(update, str(e))
+            return
+        reqs = (await s.execute(select(UpgradeRequest).where(UpgradeRequest.user_id == uid, UpgradeRequest.status == "new"))).scalars().all()
+        for r in reqs:
+            r.status = "done"
+        await s.commit()
+        until = aware(user.plan_until).astimezone(config.TZ).strftime("%d.%m.%Y")
+    await reply(update, f"Готово: {uid} → {billing.PLANS[plan].name} до {until}.")
+    try:
+        await context.bot.send_message(uid, f"Тариф «{billing.PLANS[plan].name}» подключён до {until}. Спасибо, что выбрали Kyran.")
+    except Exception:
+        pass
+
+
+# ── Мониторинг сайтов (только в боте) ──────────────────────
+
+async def watch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await reply(update, "Пришлите адрес страницы с закупками заказчика, например:\n/watch https://example.kz/zakupki\n\n"
+                            "Проверяю каждые 3 часа и пишу, когда появляется что-то новое.")
+        return
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id)
+        try:
+            m = await monitors.add_monitor(s, user, context.args[0])
+        except Exception as e:
+            await reply(update, f"Не получилось добавить: {e}")
+            return
+    await reply(update, f"Слежу за сайтом «{m.title}». Список: /sites")
+
+
+async def sites_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        items = (await s.execute(select(Monitor).where(Monitor.user_id == update.effective_user.id, Monitor.active.is_(True))
+                                 .order_by(Monitor.id))).scalars().all()
+    if not items:
+        await reply(update, "Вы пока не следите ни за одним сайтом. Добавить: /watch &lt;адрес&gt;")
+        return
+    lines = []
+    for m in items:
+        checked = aware(m.last_checked).astimezone(config.TZ).strftime("%d.%m %H:%M") if m.last_checked else "ещё не проверялся"
+        err = f" — ошибка: {m.last_error[:60]}" if m.last_error else ""
+        lines.append(f"<b>{m.id}</b>. {m.title[:70]}\n{m.url[:90]}\nпроверен: {checked}{err}")
+    await reply(update, "Сайты под наблюдением:\n\n" + "\n\n".join(lines) + "\n\nУбрать: /unwatch &lt;номер&gt;")
+
+
+async def unwatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        mid = int(context.args[0])
+    except (IndexError, ValueError):
+        await reply(update, "Укажите номер из списка /sites, например: /unwatch 3")
+        return
+    async with db.Session() as s:
+        m = await s.get(Monitor, mid)
+        if not m or m.user_id != update.effective_user.id:
+            await reply(update, "Такого сайта в вашем списке нет.")
+            return
+        await s.delete(m)
+        await s.commit()
+    await reply(update, "Больше не слежу за этим сайтом.")
+
+
 # ── Кнопки под карточками ──────────────────────────────────
 
 async def on_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -267,6 +387,9 @@ async def on_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
     if not text:
+        return
+    if re.fullmatch(r"\d{6}", text):
+        await confirm_login(update, code=text)
         return
     await update.effective_chat.send_action(ChatAction.TYPING)
 
@@ -391,9 +514,52 @@ async def monitors_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("Уведомление о сайте не отправилось")
 
 
+async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Напоминания: сроки подачи по закупкам в воронке и истекающие документы."""
+    now = utcnow()
+    msgs: list[tuple[int, str, object]] = []
+    async with db.Session() as s:
+        rows = (await s.execute(
+            select(PipelineItem, Lot).join(Lot, Lot.id == PipelineItem.lot_id)
+            .where(PipelineItem.stage.in_(("saved", "preparing")), Lot.deadline.is_not(None), Lot.deadline > now)
+        )).all()
+        for p, lot in rows:
+            left = aware(lot.deadline) - now
+            if left <= timedelta(days=1) and not p.reminded_1d:
+                p.reminded_1d = p.reminded_3d = True
+                msgs.append((p.user_id, f"Меньше суток до окончания приёма заявок:\n{T.card(lot)}", lot_buttons(lot)))
+            elif left <= timedelta(days=3) and not p.reminded_3d:
+                p.reminded_3d = True
+                msgs.append((p.user_id, f"До окончания приёма заявок осталось меньше 3 дней:\n{T.card(lot)}", lot_buttons(lot)))
+        docs = (await s.execute(select(Document).where(Document.expires_at.is_not(None)))).scalars().all()
+        for d in docs:
+            left = aware(d.expires_at) - now
+            when = aware(d.expires_at).astimezone(config.TZ).strftime("%d.%m.%Y")
+            if left <= timedelta(days=7) and not d.reminded_7d:
+                d.reminded_7d = d.reminded_30d = True
+                verb = "истёк" if left.total_seconds() < 0 else "истекает"
+                msgs.append((d.user_id, f"Документ «{d.title}» {verb} {when}. Обновите его, чтобы не получить отклонение заявки.",
+                             open_app_markup("Открыть документы")))
+            elif left <= timedelta(days=30) and not d.reminded_30d:
+                d.reminded_30d = True
+                msgs.append((d.user_id, f"Через месяц, {when}, истекает документ «{d.title}». Закажите новый заранее.",
+                             open_app_markup("Открыть документы")))
+        await s.commit()
+    for chat_id, text, markup in msgs:
+        try:
+            await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW, reply_markup=markup)
+        except Exception:
+            log.exception("Напоминание не отправилось")
+
+
 # ── Сборка приложения ──────────────────────────────────────
 
 async def post_init(application: Application) -> None:
+    runtime.bot = application.bot
+    try:
+        runtime.bot_username = (await application.bot.get_me()).username or ""
+    except Exception:
+        log.exception("get_me не удался")
     if config.PUBLIC_URL:
         try:
             await application.bot.set_chat_menu_button(menu_button=MenuButtonWebApp("Kyran", WebAppInfo(app_url())))
@@ -401,12 +567,13 @@ async def post_init(application: Application) -> None:
             log.exception("Не удалось поставить кнопку меню")
     await application.bot.set_my_commands([
         ("app", "Открыть Kyran"), ("find", "Лучшие тендеры сейчас"), ("urgent", "Срочные"),
-        ("profile", "Мой профиль"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
+        ("profile", "Мой профиль"), ("sites", "Сайты под наблюдением"), ("watch", "Следить за сайтом"),
+        ("plan", "Мой тариф"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
     ])
 
 
 def build() -> Application:
-    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -418,7 +585,9 @@ def build() -> Application:
     )
     application.add_handler(onboarding)
     for name, fn in [("app", app_cmd), ("web", web_cmd), ("find", find_cmd), ("urgent", urgent_cmd), ("profile", profile_cmd),
-                     ("stop", stop_cmd), ("resume", resume_cmd), ("help", help_cmd), ("stats", stats_cmd)]:
+                     ("stop", stop_cmd), ("resume", resume_cmd), ("help", help_cmd), ("stats", stats_cmd),
+                     ("logout_all", logout_all_cmd), ("plan", plan_cmd), ("grant", grant_cmd),
+                     ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, free_text))
@@ -427,4 +596,5 @@ def build() -> Application:
     jq.run_repeating(collect_job, interval=config.COLLECT_EVERY_MIN * 60, first=5)
     jq.run_repeating(monitors_job, interval=config.WEBSITE_EVERY_MIN * 60, first=120)
     jq.run_daily(digest_job, time=dtime(hour=config.DIGEST_HOUR, tzinfo=config.TZ))
+    jq.run_repeating(reminders_job, interval=3600, first=60)
     return application

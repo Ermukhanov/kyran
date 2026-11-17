@@ -46,12 +46,17 @@ def _sign(payload: bytes) -> str:
     return hmac.new(config.SECRET_KEY.encode(), payload, hashlib.sha256).hexdigest()[:32]
 
 
-def make_link_token(user_id: int, ttl: int = LINK_TTL) -> str:
-    payload = base64.urlsafe_b64encode(json.dumps({"u": user_id, "e": int(time.time()) + ttl}).encode()).decode().rstrip("=")
+def make_link_token(user_id: int, ttl: int = LINK_TTL, version: int = 0) -> str:
+    payload = base64.urlsafe_b64encode(json.dumps({"u": user_id, "e": int(time.time()) + ttl, "v": version}).encode()).decode().rstrip("=")
     return f"{payload}.{_sign(payload.encode())}"
 
 
 def read_link_token(token: str) -> int:
+    return read_token(token)[0]
+
+
+def read_token(token: str) -> tuple[int, int]:
+    """(user_id, версия токена)."""
     try:
         payload, sig = token.rsplit(".", 1)
     except ValueError:
@@ -60,8 +65,8 @@ def read_link_token(token: str) -> int:
         raise ValueError("неверная подпись")
     data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     if data["e"] < time.time():
-        raise ValueError("ссылка устарела, получите новую командой /web")
-    return int(data["u"])
+        raise ValueError("сессия истекла, войдите заново")
+    return int(data["u"]), int(data.get("v", 0))
 
 
 async def current_tg_user(authorization: str = Header(default="")) -> dict:
@@ -71,9 +76,10 @@ async def current_tg_user(authorization: str = Header(default="")) -> dict:
         if scheme == "tma":
             u = validate_init_data(value, config.TELEGRAM_BOT_TOKEN)
             name = " ".join(x for x in (u.get("first_name"), u.get("last_name")) if x)
-            return {"id": int(u["id"]), "name": name, "username": u.get("username", "")}
+            return {"id": int(u["id"]), "name": name, "username": u.get("username", ""), "v": None}
         if scheme == "Bearer":
-            return {"id": read_link_token(value), "name": "", "username": ""}
+            uid, version = read_token(value)
+            return {"id": uid, "name": "", "username": "", "v": version}
     except (ValueError, KeyError, json.JSONDecodeError) as e:
         raise HTTPException(401, f"Нет доступа: {e}")
-    raise HTTPException(401, "Откройте Kyran через Telegram-бота или по ссылке из команды /web")
+    raise HTTPException(401, "Требуется вход")

@@ -51,3 +51,13 @@ WEBSITE_EVERY_MIN = int(os.environ.get("WEBSITE_EVERY_MIN", "180"))
 DIGEST_HOUR = int(os.environ.get("DIGEST_HOUR", "9"))
 DIGEST_SIZE = int(os.environ.get("DIGEST_SIZE", "8"))
 URGENT_DAYS = int(os.environ.get("URGENT_DAYS", "3"))
+
+# ── Оплата ──
+# Текст с реквизитами (Kaspi / счёт), который увидит клиент после заявки на тариф
+PAYMENT_INFO = os.environ.get(
+    "PAYMENT_INFO",
+    "После заявки менеджер свяжется с вами в Telegram и выставит счёт на оплату (Kaspi или безналичный расчёт для ТОО/ИП).",
+)
+
+# Имя бота без @ (обычно определяется автоматически при запуске)
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "").lstrip("@")
