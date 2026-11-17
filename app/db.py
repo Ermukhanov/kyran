@@ -51,6 +51,15 @@ class User(Base):
     plan_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Увеличение номера разлогинивает все устройства
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Реквизиты для документов заявки
+    director: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    director_title: Mapped[str] = mapped_column(String(100), default="Директор", server_default="Директор")
+    address: Mapped[str] = mapped_column(String(400), default="", server_default="")
+    phone: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    email: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    bank_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    iban: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    bik: Mapped[str] = mapped_column(String(20), default="", server_default="")
     # Какое уведомление о тарифе уже отправлено: "", "soon:<дата>", "expired:<дата>"
     plan_notice: Mapped[str] = mapped_column(String(40), default="", server_default="")
 
@@ -197,6 +206,21 @@ class Document(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     reminded_30d: Mapped[bool] = mapped_column(Boolean, default=False)
     reminded_7d: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GeneratedDoc(Base):
+    """Документ заявки, сформированный Kyran (Word)."""
+    __tablename__ = "generated_docs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    lot_id: Mapped[int] = mapped_column(ForeignKey("lots.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(300))
+    filename: Mapped[str] = mapped_column(String(300))
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    by_ai: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

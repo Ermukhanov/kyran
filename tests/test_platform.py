@@ -177,3 +177,54 @@ def test_expired_plan_blocks_analysis(client, tmp_path):
     lot_id = client.get("/api/search?q=ремонт").json()["items"][0]["id"]
     r = client.post(f"/api/lots/{lot_id}/analyze")
     assert r.status_code == 402 and "истёк" in r.json()["detail"]
+
+
+def test_generate_application_documents(client, monkeypatch):
+    import io
+
+    from docx import Document as Docx
+
+    from app.ai import client as ai
+
+    client.put("/api/me", json={"keywords": ["ремонт кровли"], "company_name": "ТОО «Тест Кровля»", "company_bin": "123456789012",
+                                "director": "Ахметов А.А.", "phone": "+7 700 000 00 00"})
+    lot_id = client.get("/api/search?q=кровли").json()["items"][0]["id"]
+    info = client.get(f"/api/lots/{lot_id}/docs").json()
+    assert [k["code"] for k in info["kinds"]] == ["tech", "clarify", "cover", "inventory", "experience"]
+    assert "адрес" in info["missing"] and "БИН" not in info["missing"]
+
+    # Без ИИ: письмо, опись, справка — готовы сразу; техпредложение — понятный отказ
+    for kind in ("cover", "inventory", "experience"):
+        r = client.post(f"/api/lots/{lot_id}/docs/{kind}")
+        assert r.status_code == 200, r.text
+        g = r.json()
+        assert g["by_ai"] is False and g["filename"].endswith(".docx")
+        f = client.get(f"/api/generated/{g['id']}/file")
+        text = "\n".join(p.text for p in Docx(io.BytesIO(f.content)).paragraphs)
+        assert "ТОО «Тест Кровля»" in text
+    assert client.post(f"/api/lots/{lot_id}/docs/tech").status_code == 400
+    assert client.post(f"/api/lots/{lot_id}/docs/clarify").status_code == 400  # нет разбора и нет ИИ
+
+    # С ИИ (замокан)
+    monkeypatch.setattr(ai, "available", lambda: True)
+
+    async def fake(model, system, prompt, max_tokens=4000):
+        if "questions" in prompt and "scope" not in prompt:
+            return {"questions": ["Уточните площадь кровли", "Допускается ли аналог материала?"]}
+        return {"intro": "Поставщик предлагает выполнить текущий ремонт кровли.",
+                "scope": [{"name": "Демонтаж покрытия", "qty": "1450", "unit": "м²", "note": ""}],
+                "method": ["Демонтаж", "Монтаж"], "timeline": "[уточнить]", "resources": [], "quality": ["Акты скрытых работ"],
+                "warranty": "24 месяца", "compliance": [{"requirement": "Лицензия СМР", "response": "Имеется"}]}
+
+    monkeypatch.setattr(ai, "ask_json", fake)
+    t = client.post(f"/api/lots/{lot_id}/docs/tech").json()
+    assert t["by_ai"] is True
+    body = Docx(io.BytesIO(client.get(f"/api/generated/{t['id']}/file").content))
+    alltext = "\n".join(p.text for p in body.paragraphs) + "\n".join(c.text for tb in body.tables for r in tb.rows for c in r.cells)
+    assert "Демонтаж покрытия" in alltext and "24 месяца" in alltext
+    c = client.post(f"/api/lots/{lot_id}/docs/clarify").json()
+    assert c["by_ai"] is True
+    me = client.get("/api/me").json()
+    assert me["plan"]["usage"]["generations"] == 2
+    latest = {k["code"]: k["doc"] for k in client.get(f"/api/lots/{lot_id}/docs").json()["kinds"]}
+    assert all(latest.values())

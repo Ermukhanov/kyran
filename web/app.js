@@ -270,6 +270,11 @@
             <div id="ready"></div>
           </section>
 
+          <section class="panel" id="gen-panel">
+            <div class="panel-head"><h2>Документы заявки</h2><span class="hint">Word, готовы к правке и подписи</span></div>
+            <div id="gen"></div>
+          </section>
+
           <section class="panel" id="analysis-panel">
             <div class="panel-head"><h2>ИИ-разбор</h2><span id="analysis-action"></span></div>
             <div id="analysis"></div>
@@ -310,6 +315,7 @@
     bindCalc(l);
     loadMarket(l);
     bindAsk(id, data.ai);
+    loadGen(id);
     const stage = view.querySelector("#stage");
     const note = view.querySelector("#note");
     stage.addEventListener("change", async () => {
@@ -376,7 +382,7 @@
     box.innerHTML = `<div class="loading"><span class="spinner"></span>Анализ условий закупки и документации…</div>`;
     try {
       const { analysis } = await api(`/lots/${id}/analyze?refresh=${refresh}`, { method: "POST" });
-      haptic(); renderAnalysis(id, analysis, true); loadReadiness(id); loadMe().catch(() => {});
+      haptic(); renderAnalysis(id, analysis, true); loadReadiness(id); loadGen(id); loadMe().catch(() => {});
     } catch (e) {
       box.innerHTML = `<div class="panel-body"><p class="desc">${esc(e.message)}</p>${e.status === 402 ? `<p style="margin-top:12px"><a class="btn btn-primary" href="#profile/plan">Выбрать тариф</a></p>` : ""}</div>`;
       if (e.status !== 402) {
@@ -407,6 +413,62 @@
       <a href="#documents">Открыть библиотеку</a></div>`;
   }
 
+
+
+  // ── Документы заявки ────────────────────────────
+  async function downloadGenerated(d) {
+    // В Telegram скачивание файлов из мини-приложения ненадёжно — бот присылает документ в чат
+    if (tg) {
+      try { await api(`/generated/${d.id}/send`, { method: "POST" }); toast("Документ отправлен в чат с ботом"); }
+      catch (e) { toast(e.message); }
+      return;
+    }
+    const res = await fetch(`/api/generated/${d.id}/file`, { headers: { Authorization: authHeader() } });
+    if (!res.ok) return toast("Не удалось скачать документ");
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = d.filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  async function loadGen(id) {
+    const box = document.getElementById("gen");
+    if (!box) return;
+    let r;
+    try { r = await api(`/lots/${id}/docs`); } catch (e) { box.innerHTML = `<div class="panel-body"><p class="desc">${esc(e.message)}</p></div>`; return; }
+    const p = state.me.plan;
+    box.innerHTML = `
+      ${r.missing.length ? `<div class="gen-warn">Для документов не хватает реквизитов: ${esc(r.missing.join(", "))}. Пустые места останутся прочерками. <a href="#profile/company">Заполнить реквизиты</a></div>` : ""}
+      <div class="gen-list">${r.kinds.map((k) => `
+        <div class="gen-row" data-kind="${k.code}">
+          <div class="gen-ico" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M5 2.5h7l3.5 3.5v11.5H5z"/><path d="M12 2.5V6h3.5"/></svg></div>
+          <div class="gen-body"><div class="cell-title">${esc(k.title)}${k.ai ? ` <span class="tag-ai">ИИ</span>` : ""}</div>
+            <div class="cell-sub">${k.doc ? `Сформирован ${esc(dateTime(k.doc.created_at))}` : esc(k.description)}</div></div>
+          <div class="gen-act">${k.doc ? `<button class="btn btn-sm" data-dl="${k.doc.id}">${tg ? "В чат" : "Скачать"}</button>${tg ? "" : `<button class="btn btn-sm btn-ghost" data-tg="${k.doc.id}" title="Отправить в Telegram">В Telegram</button>`}<button class="btn btn-sm btn-ghost" data-make="${k.code}">Обновить</button>`
+            : `<button class="btn btn-sm ${k.code === "tech" ? "btn-primary" : ""}" data-make="${k.code}" ${k.ai && !r.ai ? "disabled title='Нужен ИИ-модуль'" : ""}>Сформировать</button>`}</div>
+        </div>`).join("")}</div>
+      <div class="a-foot">Документы с отметкой ИИ расходуют лимит тарифа: ${p.usage.generations ?? 0} из ${p.limits.generations ?? 0} в этом месяце. Перед подачей проверьте и подпишите.</div>`;
+    const byId = {};
+    r.kinds.forEach((k) => { if (k.doc) byId[k.doc.id] = k.doc; });
+    box.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () => downloadGenerated(byId[b.dataset.dl])));
+    box.querySelectorAll("[data-tg]").forEach((b) => b.addEventListener("click", async () => {
+      try { await api(`/generated/${b.dataset.tg}/send`, { method: "POST" }); toast("Отправлено в чат с ботом"); } catch (e) { toast(e.message); }
+    }));
+    box.querySelectorAll("[data-make]").forEach((b) => b.addEventListener("click", async () => {
+      const row = b.closest(".gen-row");
+      row.querySelector(".gen-act").innerHTML = `<span class="gen-wait"><span class="spinner"></span>${b.dataset.make === "tech" ? "Готовим, до минуты…" : "Готовим…"}</span>`;
+      try {
+        const d = await api(`/lots/${id}/docs/${b.dataset.make}`, { method: "POST" });
+        haptic(); toast(`«${d.title}» готов`);
+        await loadMe().catch(() => {});
+        await loadGen(id);
+        downloadGenerated(d);
+      } catch (e) {
+        toast(e.message);
+        if (e.status === 402) location.hash = "#profile/plan"; else loadGen(id);
+      }
+    }));
+  }
 
   // ── Рынок и конкуренты ──────────────────────────
   async function loadMarket(l) {
@@ -758,14 +820,27 @@
         <label class="form-row"><span class="title">Название компании</span><input id="cname" class="input" maxlength="300" value="${esc(u.company_name)}" placeholder="ТОО «Название»"></label>
         <label class="form-row"><span class="title">БИН / ИИН</span><input id="bin" class="input" inputmode="numeric" maxlength="12" value="${esc(u.company_bin)}" placeholder="12 цифр"></label>
       </div>
-      <label class="form-row"><span class="title">О компании</span><span class="hint">Опыт, лицензии, техника, штат, регионы работы. ИИ учитывает это при оценке закупок и в разборах.</span>
+      <label class="form-row"><span class="title">О компании</span><span class="hint">Опыт, лицензии, техника, штат, регионы работы. ИИ учитывает это при оценке закупок, в разборах и в техническом предложении.</span>
         <textarea id="about" class="textarea" rows="6" maxlength="2000">${esc(u.about)}</textarea></label>
+      <div class="form-section"><h3>Реквизиты для документов заявки</h3><p class="hint">Подставляются в письма, опись и техническое предложение.</p></div>
+      <div class="form-grid">
+        <label class="form-row"><span class="title">Руководитель (ФИО)</span><input class="input" data-r="director" maxlength="200" value="${esc(u.director)}" placeholder="Ахметов Ерлан Серикович"></label>
+        <label class="form-row"><span class="title">Должность</span><input class="input" data-r="director_title" maxlength="100" value="${esc(u.director_title || "Директор")}"></label>
+        <label class="form-row full"><span class="title">Юридический адрес</span><input class="input" data-r="address" maxlength="400" value="${esc(u.address)}" placeholder="г. Астана, ул. Кенесары 40, офис 12"></label>
+        <label class="form-row"><span class="title">Телефон</span><input class="input" data-r="phone" maxlength="60" inputmode="tel" value="${esc(u.phone)}" placeholder="+7 7__ ___ __ __"></label>
+        <label class="form-row"><span class="title">E-mail</span><input class="input" data-r="email" maxlength="120" inputmode="email" value="${esc(u.email)}"></label>
+        <label class="form-row"><span class="title">Банк</span><input class="input" data-r="bank_name" maxlength="200" value="${esc(u.bank_name)}" placeholder="АО «Kaspi Bank»"></label>
+        <label class="form-row"><span class="title">БИК</span><input class="input" data-r="bik" maxlength="20" value="${esc(u.bik)}"></label>
+        <label class="form-row full"><span class="title">IBAN</span><input class="input" data-r="iban" maxlength="40" value="${esc(u.iban)}" placeholder="KZ__ ____ ____ ____ ____"></label>
+      </div>
       <div class="form-actions"><button class="btn btn-primary" id="save">Сохранить</button></div>
     </div></div></section>`;
     box.querySelector("#save").addEventListener("click", (e) => {
       const bin = box.querySelector("#bin").value.replace(/\D/g, "");
       if (bin && bin.length !== 12) return toast("БИН должен содержать 12 цифр");
-      saveMe(e.target, { company_bin: bin, company_name: box.querySelector("#cname").value.trim(), about: box.querySelector("#about").value });
+      const req = {};
+      box.querySelectorAll("[data-r]").forEach((i) => (req[i.dataset.r] = i.value.trim()));
+      saveMe(e.target, { company_bin: bin, company_name: box.querySelector("#cname").value.trim(), about: box.querySelector("#about").value, ...req });
     });
   }
 
@@ -804,6 +879,7 @@
         <div><span class="field-label">Текущий тариф</span><div class="plan-name">${esc(p.name)}</div>
           <div class="cell-sub">${p.until ? (p.active ? "Действует до " : "Закончился ") + esc(dateShort(p.until)) : ""}</div></div>
         <div class="usage"><div><span>ИИ-разборы в этом месяце</span><b>${p.usage.analyses} / ${p.limits.analyses}</b></div>${bar(p.usage.analyses, p.limits.analyses)}</div>
+        <div class="usage"><div><span>Документы заявки от ИИ</span><b>${p.usage.generations} / ${p.limits.generations}</b></div>${bar(p.usage.generations, p.limits.generations)}</div>
         <div class="usage"><div><span>Документы в библиотеке</span><b>${p.usage.documents} / ${p.limits.documents}</b></div>${bar(p.usage.documents, p.limits.documents)}</div>
       </div></section>
       <div class="plans">${p.catalog.map((c) => `<section class="plan ${c.code === "pro" ? "featured" : ""} ${c.code === p.code && p.active ? "current" : ""}">

@@ -339,7 +339,7 @@ table.grid { width: 100%; border-collapse: collapse; }
 .info-list > div { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .info-list > div:last-child { border-bottom: none; }
 .info-list span { color: var(--ink-2); }
-.plan-now { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 24px; align-items: center; }
+.plan-now { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1fr; gap: 24px; align-items: center; }
 .plan-name { font-size: 20px; font-weight: 600; }
 .usage { display: grid; gap: 6px; }
 .usage > div { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
@@ -371,6 +371,21 @@ body.auth .view { padding: 0; max-width: none; }
 .login .hint { margin: 12px 0 0; text-align: center; }
 .login-foot { color: var(--muted); font-size: 12.5px; margin: 0; }
 
+
+/* ── Документы заявки ─────────────────────── */
+.gen-warn { margin: 14px 20px 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--ink-2); font-size: 13px; }
+.gen-list { display: grid; padding: 6px 0; }
+.gen-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 20px; }
+.gen-row + .gen-row { border-top: 1px solid var(--line); }
+.gen-ico { width: 34px; height: 34px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.gen-ico svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.gen-act { display: flex; gap: 6px; }
+.gen-wait { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.tag-ai { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600; vertical-align: 1px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.form-section h3 { margin: 8px 0 2px; font-size: 15px; font-weight: 600; }
+.form-section .hint { margin: 0; }
+.form-row.full { grid-column: 1 / -1; }
 
 /* ── Рынок ────────────────────────────────── */
 .mkt-kpis { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
@@ -446,6 +461,8 @@ body.auth .view { padding: 0; max-width: none; }
   .mkt-kpis > div { padding: 12px 14px; }
   .mkt-kpis b { font-size: 17px; }
   .info-list > div { grid-template-columns: 1fr; gap: 2px; }
+  .gen-row { grid-template-columns: 34px minmax(0, 1fr); padding: 10px 14px; }
+  .gen-act { grid-column: 2; }
   .dl { padding: 10px 14px; grid-template-columns: 46px minmax(0, 1fr); }
   .dl > .left, .dl > .status { grid-column: 2; justify-self: start; }
   .tabbar a { font-size: 10px; }

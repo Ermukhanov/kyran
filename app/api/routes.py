@@ -14,7 +14,8 @@ from app.ai import client as ai
 from app.api.auth import current_tg_user
 from app.db import DOC_KINDS, STAGES, Analysis, Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
 from app import runtime
-from app.services import billing, documents as docsvc, insights, login
+from app.services import billing, docgen, documents as docsvc, insights, login
+from app.db import GeneratedDoc
 from app.services import core, monitors
 from app.services.analyses import get_analysis, get_or_create_analysis
 from app.services.matcher import parse_keywords
@@ -92,6 +93,8 @@ def user_json(u: User) -> dict[str, Any]:
         "id": u.id, "name": u.name, "username": u.username, "company_bin": u.company_bin, "company_name": u.company_name,
         "keywords": u.keywords or [], "about": u.about, "min_amount": u.min_amount, "max_amount": u.max_amount,
         "regions": u.regions or [], "notify": u.notify, "onboarded": u.onboarded,
+        "director": u.director, "director_title": u.director_title, "address": u.address, "phone": u.phone,
+        "email": u.email, "bank_name": u.bank_name, "iban": u.iban, "bik": u.bik,
     }
 
 
@@ -117,6 +120,14 @@ class ProfileIn(BaseModel):
     max_amount: float | None = None
     regions: list[str] | None = None
     notify: bool | None = None
+    director: str | None = Field(default=None, max_length=200)
+    director_title: str | None = Field(default=None, max_length=100)
+    address: str | None = Field(default=None, max_length=400)
+    phone: str | None = Field(default=None, max_length=60)
+    email: str | None = Field(default=None, max_length=120)
+    bank_name: str | None = Field(default=None, max_length=200)
+    iban: str | None = Field(default=None, max_length=40)
+    bik: str | None = Field(default=None, max_length=20)
 
 
 @router.put("/me")
@@ -292,6 +303,76 @@ async def lot_ask(lot_id: int, body: AskIn, u: User = Depends(get_user), s: Asyn
     except RuntimeError as e:
         raise HTTPException(503, str(e))
     return {"answer": answer}
+
+
+def gen_json(g: GeneratedDoc) -> dict:
+    return {"id": g.id, "kind": g.kind, "title": g.title, "filename": g.filename, "size": len(g.content or b""),
+            "by_ai": g.by_ai, "created_at": aware(g.created_at).isoformat()}
+
+
+@router.get("/lots/{lot_id}/docs")
+async def lot_docs(lot_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    await _lot_or_404(s, lot_id)
+    items = (await s.execute(select(GeneratedDoc).where(GeneratedDoc.user_id == u.id, GeneratedDoc.lot_id == lot_id)
+                             .order_by(GeneratedDoc.created_at.desc()))).scalars().all()
+    latest = {}
+    for g in items:
+        latest.setdefault(g.kind, gen_json(g))
+    return {
+        "kinds": [{"code": k.code, "title": k.title, "description": k.description, "ai": k.ai, "doc": latest.get(k.code)}
+                  for k in docgen.KINDS.values()],
+        "missing": docgen.missing_requisites(u),
+        "ai": ai.available(),
+    }
+
+
+@router.post("/lots/{lot_id}/docs/{kind}")
+async def lot_doc_generate(lot_id: int, kind: str, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    lot = await _lot_or_404(s, lot_id)
+    try:
+        g = await docgen.generate(s, u, lot, kind)
+    except billing.LimitError as e:
+        raise HTTPException(402, str(e))
+    except docgen.GenerationError as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Не удалось сформировать документ %s", kind)
+        raise HTTPException(502, "Не удалось сформировать документ. Попробуйте ещё раз через минуту.")
+    return gen_json(g)
+
+
+@router.get("/generated/{doc_id}/file")
+async def generated_file(doc_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    g = await s.get(GeneratedDoc, doc_id)
+    if not g or g.user_id != u.id:
+        raise HTTPException(404, "Документ не найден")
+    from urllib.parse import quote
+
+    return Response(g.content, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(g.filename)}"})
+
+
+@router.post("/generated/{doc_id}/send")
+async def generated_send(doc_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    """Отправить документ в чат с ботом — удобно в Telegram и на телефоне."""
+    g = await s.get(GeneratedDoc, doc_id)
+    if not g or g.user_id != u.id:
+        raise HTTPException(404, "Документ не найден")
+    if not runtime.bot:
+        raise HTTPException(503, "Telegram-бот не подключён")
+    import io as _io
+
+    from telegram import InputFile
+
+    lot = await s.get(Lot, g.lot_id)
+    try:
+        await runtime.bot.send_document(u.id, InputFile(_io.BytesIO(g.content), filename=g.filename),
+                                        caption=f"{g.title}\n{lot.title if lot else ''}"[:1000])
+    except Exception:
+        raise HTTPException(502, "Не удалось отправить в Telegram. Откройте чат с ботом и нажмите «Старт».")
+    return {"ok": True}
 
 
 @router.get("/lots/{lot_id}/insights")
