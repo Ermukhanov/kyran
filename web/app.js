@@ -8,6 +8,7 @@
     ["saved", "Интересно"], ["preparing", "Готовим"], ["submitted", "Подали"], ["won", "Выиграли"], ["lost", "Проиграли"],
   ];
   const STAGE_NAME = Object.fromEntries(STAGES);
+  const STAGE_ICON = { saved: "⭐", preparing: "🛠️", submitted: "📨", won: "🏆", lost: "🌧️" };
   const AMOUNTS = [
     ["Любые", null, null], ["До 5 млн", null, 5e6], ["5–50 млн", 5e6, 5e7], ["50–300 млн", 5e7, 3e8], ["От 300 млн", 3e8, null],
   ];
@@ -95,16 +96,51 @@
   }
   const skeleton = (n = 4) => `<div aria-hidden="true">${'<div class="skeleton"></div>'.repeat(n)}</div>`;
 
+  // Категория тендера → цветная иконка (по словам в названии)
+  const CATEGORIES = [
+    [/ремонт|строит|кровл|фасад|благоустр|дорог|монтаж|отделоч/i, "🏗️", "build"],
+    [/канц|бумаг|учебн|литератур|тетрад/i, "📚", "paper"],
+    [/мебел|парт|стул/i, "🪑", "furniture"],
+    [/компьют|ноутбук|портал|программ|сайт|веб|цифров|видеонаблюд|it\b/i, "💻", "tech"],
+    [/питани|продукт|молоч|мяс/i, "🍲", "food"],
+    [/медицин|шприц|перчат|лекарств|больниц/i, "🩺", "med"],
+    [/уборк|клининг|чистк/i, "🧹", "clean"],
+    [/спецодежд|одежд|обув/i, "🦺", "wear"],
+    [/обучени|курс|тренинг/i, "🎓", "edu"],
+    [/smm|реклам|маркетинг|продвижен/i, "📣", "media"],
+    [/отоплен|сантех|пожар|сигнализ|электр/i, "🔧", "eng"],
+  ];
+  function category(l) {
+    const text = l.title + " " + (l.description || "");
+    for (const [re, icon, cls] of CATEGORIES) if (re.test(text)) return { icon, cls };
+    return { icon: "📦", cls: "other" };
+  }
+  function deadlinePill(hours) {
+    const heat = hours == null ? "" : hours < 72 ? "hot" : hours < 24 * 7 ? "warm" : "cool";
+    const icon = heat === "hot" ? "🔥" : "⏳";
+    return `<span class="pill deadline ${heat}">${icon} ${esc(leftLabel(hours))}</span>`;
+  }
+
   function lotRow(l) {
-    const meta = [
-      `<span class="lot-amount">${esc(money(l.amount))}</span>`,
-      l.customer ? `<span>${esc(l.customer)}</span>` : "",
-      l.stage ? `<span class="stage-tag">${esc(STAGE_NAME[l.stage] || l.stage)}</span>` : "",
-      l.is_demo ? `<span class="demo-tag">демо</span>` : "",
-    ].join("");
+    const c = category(l);
+    const left = l.hours_left == null ? 100 : Math.max(3, Math.min(100, (l.hours_left / (14 * 24)) * 100));
+    const heat = l.hours_left == null ? "cool" : l.hours_left < 72 ? "hot" : l.hours_left < 24 * 7 ? "warm" : "cool";
     return `<li><a class="lot" href="#lot/${l.id}">
-      ${scoreRing(l.score)}
-      <div><p class="lot-title">${esc(l.title)}</p><div class="lot-meta">${meta}</div>${fuse(l.hours_left)}</div>
+      <div class="tile cat-${c.cls}" aria-hidden="true">${c.icon}</div>
+      <div class="lot-body">
+        <div class="lot-top">
+          <p class="lot-title">${esc(l.title)}</p>
+          ${l.score != null ? `<span class="match" title="Совпадение с вашим профилем">${l.score}%</span>` : ""}
+        </div>
+        ${l.customer ? `<p class="lot-customer">${esc(l.customer)}</p>` : ""}
+        <div class="lot-pills">
+          <span class="pill amount">${esc(money(l.amount))}</span>
+          ${deadlinePill(l.hours_left)}
+          ${l.stage ? `<span class="pill stage st-${esc(l.stage)}">${esc(STAGE_NAME[l.stage] || l.stage)}</span>` : ""}
+          ${l.is_demo ? `<span class="pill demo">демо</span>` : ""}
+        </div>
+      </div>
+      <div class="lot-fuse ${heat}" style="--left:${left}" aria-hidden="true"></div>
     </a></li>`;
   }
 
@@ -129,17 +165,28 @@
     const s = me.stats;
     const name = (me.user.name || "").split(" ")[0];
     view.innerHTML = `
-      <section class="horizon">
-        ${name ? `<div class="greeting">${esc(greet())}, ${esc(name)}</div>` : ""}
-        <div class="horizon-count">${s.open}</div>
-        <div class="horizon-text">${plural(s.open, "открытый тендер", "открытых тендера", "открытых тендеров")} под вас
-          на <strong>${esc(money(s.total_amount))}</strong>${s.urgent ? `, <span class="horizon-hot">${s.urgent} ${plural(s.urgent, "горит", "горят", "горят")}</span>` : ""}</div>
+      <section class="hero">
+        <svg class="hero-hills" viewBox="0 0 400 60" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 30 C70 0 130 8 200 22 S330 0 400 8 V60 H0Z" fill="#7FD3F0" opacity=".55"/>
+          <path d="M0 46 C90 20 170 30 250 40 S360 30 400 34 V60 H0Z" fill="#B7E9FA" opacity=".7"/>
+        </svg>
+        <svg class="hero-sky" viewBox="0 0 140 130" aria-hidden="true">
+          <circle cx="100" cy="38" r="36" fill="#FFD45C" opacity=".25"/>
+          <circle cx="100" cy="38" r="24" fill="#FFD45C"/>
+          <path class="hero-eagle" transform="translate(30 70) scale(1.35)" d="M1 10.5c5.5-.4 9.6 1.8 13 5.6l.6-2.3c.3-1 .8-1.5 1.4-1.5s1.1.5 1.4 1.5l.6 2.3c3.4-3.8 7.5-6 13-5.6-4.6 1.6-8.2 4.6-10.6 8.8L18 23.5l-2 3-2-3-1.4-4.2C10.2 15.1 5.6 12.1 1 10.5z" fill="#FFFFFF" opacity=".92"/>
+        </svg>
+        <div class="hero-content">
+          <div class="greeting">${esc(greet())}${name ? ", " + esc(name) : ""} 👋</div>
+          <div class="hero-count">${s.open}</div>
+          <div class="hero-text">${plural(s.open, "тендер", "тендера", "тендеров")} под вас на <strong>${esc(money(s.total_amount))}</strong></div>
+          ${s.urgent ? `<button class="hero-hot" data-f="urgent">🔥 ${s.urgent} ${plural(s.urgent, "горит", "горят", "горят")} — посмотреть</button>` : ""}
+        </div>
       </section>
       <input class="search" type="search" placeholder="Поиск по названию или заказчику" value="${esc(state.query)}" aria-label="Поиск">
       <div class="filters" role="group" aria-label="Фильтр">
         <button class="chip" data-f="all" aria-pressed="${state.filter === "all"}">Все</button>
-        <button class="chip" data-f="urgent" aria-pressed="${state.filter === "urgent"}">Горят</button>
-        <button class="chip" data-f="anywhere">Искать везде</button>
+        <button class="chip" data-f="urgent" aria-pressed="${state.filter === "urgent"}">🔥 Горят</button>
+        <button class="chip" data-f="anywhere">🔎 Искать везде</button>
       </div>
       <ul class="lots" id="lots">${skeleton()}</ul>`;
 
@@ -152,6 +199,8 @@
       view.querySelectorAll(".chip").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       loadLots();
     }));
+    const hot = view.querySelector(".hero-hot");
+    if (hot) hot.addEventListener("click", () => view.querySelector('.chip[data-f="urgent"]').click());
     loadLots();
   }
 
@@ -197,22 +246,26 @@
     const docs = (l.documents || []).filter((d) => d.url);
     view.innerHTML = `
       ${tg ? "" : `<button class="btn btn-quiet back" data-act="back">‹ Назад</button>`}
-      ${l.is_demo ? `<span class="demo-tag">демо-пример</span>` : ""}
-      <h1 class="detail-title">${esc(l.title)}</h1>
-      <p class="detail-customer">${esc(l.customer || "Заказчик не указан")}${l.region ? ", " + esc(l.region) : ""}</p>
+      <section class="detail-head cat-${category(l).cls}">
+        <div class="tile big" aria-hidden="true">${category(l).icon}</div>
+        <div>
+          ${l.is_demo ? `<span class="pill demo">демо-пример</span>` : ""}
+          <h1 class="detail-title">${esc(l.title)}</h1>
+          <p class="detail-customer">${esc(l.customer || "Заказчик не указан")}${l.region ? ", " + esc(l.region) : ""}</p>
+        </div>
+      </section>
       <div class="figures">
-        <div><div class="figure-value">${esc(money(l.amount, false))}</div><div class="figure-label">сумма закупки</div></div>
-        <div><div class="figure-value">${esc(deadlineDate(l.deadline) || "—")}</div><div class="figure-label">приём заявок до</div></div>
-        <div><div class="figure-value">${l.score != null ? l.score + "%" : "—"}</div><div class="figure-label">совпадение с вами</div></div>
+        <div class="figure f-amount"><div class="figure-icon">💰</div><div class="figure-value">${esc(money(l.amount))}</div><div class="figure-label">сумма закупки</div></div>
+        <div class="figure f-deadline ${l.hours_left != null && l.hours_left < 72 ? "hot" : ""}"><div class="figure-icon">⏳</div><div class="figure-value">${esc(leftLabel(l.hours_left))}</div><div class="figure-label">${l.deadline ? "до " + esc(deadlineDate(l.deadline)) : "срок не указан"}</div></div>
+        <div class="figure f-score"><div class="figure-icon">🎯</div><div class="figure-value">${l.score != null ? l.score + "%" : "—"}</div><div class="figure-label">совпадение с вами</div></div>
       </div>
-      ${fuse(l.hours_left, true)}
       ${l.reason ? `<p class="reason">${esc(l.reason)}</p>` : ""}
       ${l.description ? `<h2 class="section-title">Что закупают</h2><p>${esc(l.description)}</p>` : ""}
       ${l.method ? `<p class="detail-customer">Способ закупки: ${esc(l.method)}</p>` : ""}
 
       <h2 class="section-title">Ваш статус</h2>
       <div class="stages" role="group" aria-label="Стадия в воронке">
-        ${STAGES.map(([k, n]) => `<button class="chip" data-stage="${k}" aria-pressed="${l.stage === k}">${n}</button>`).join("")}
+        ${STAGES.map(([k, n]) => `<button class="chip st-${k}" data-stage="${k}" aria-pressed="${l.stage === k}">${STAGE_ICON[k]} ${n}</button>`).join("")}
       </div>
       <div class="field"><textarea class="note-area" placeholder="Заметка для себя: цена, контакты, что подготовить">${esc(data.note)}</textarea></div>
 
@@ -257,9 +310,9 @@
     const box = document.getElementById("analysis");
     if (!a) {
       box.innerHTML = aiOn
-        ? `<p class="detail-customer">ИИ прочитает закупку и документацию и скажет: участвовать или нет, какие требования, документы и риски. Обычно 30–60 секунд.</p>
-           <button class="btn btn-primary" data-act="analyze">Разобрать тендер</button>`
-        : `<p class="detail-customer">ИИ-разбор появится, когда к Kyran подключат ИИ. Остальное уже работает.</p>`;
+        ? `<div class="ai-intro"><p>🧠 ИИ прочитает закупку и документацию и скажет: участвовать или нет, какие требования, документы и риски. Обычно 30–60 секунд.</p>
+           <button class="btn btn-primary" data-act="analyze">✨ Разобрать тендер</button></div>`
+        : `<div class="ai-intro"><p>🧠 ИИ-разбор появится, когда к Kyran подключат ИИ. Остальное уже работает.</p></div>`;
       const btn = box.querySelector('[data-act="analyze"]');
       if (btn) btn.addEventListener("click", () => runAnalysis(id, false));
       return;
@@ -305,21 +358,21 @@
 
   async function renderPipeline() {
     view.classList.add("wide");
-    view.innerHTML = `<h1 class="section-title" style="font-size:22px;margin-top:10px">Воронка</h1>${skeleton(3)}`;
+    view.innerHTML = `<h1 class="page-title">Воронка</h1>${skeleton(3)}`;
     const { columns } = await api("/pipeline");
     const total = Object.values(columns).reduce((a, c) => a + c.length, 0);
     const cols = STAGES.map(([k, n]) => {
       const items = columns[k] || [];
       const sum = items.reduce((a, x) => a + (x.amount || 0), 0);
-      return `<section class="col ${k}">
-        <div class="col-head"><h3>${n}</h3><span>${items.length}</span></div>
+      return `<section class="col st-${k}">
+        <div class="col-head"><h3>${STAGE_ICON[k]} ${n}</h3><span>${items.length}</span></div>
         ${items.length ? items.map((x) => `<a class="mini" href="#lot/${x.id}"><div class="mini-title">${esc(x.title)}</div>
           <div class="mini-meta">${esc(money(x.amount))}, ${esc(leftLabel(x.hours_left))}${x.note ? " · заметка" : ""}</div></a>`).join("")
           : `<div class="col-empty">Пусто</div>`}
         ${sum ? `<div class="mini-meta" style="padding-top:8px">Всего ${esc(money(sum))}</div>` : ""}
       </section>`;
     }).join("");
-    view.innerHTML = `<h1 class="section-title" style="font-size:22px;margin-top:10px">Воронка</h1>
+    view.innerHTML = `<h1 class="page-title">Воронка</h1>
       ${total ? "" : `<p class="detail-customer">Отмечайте тендеры кнопкой «Интересно» — они соберутся здесь, и вы будете вести их до победы.</p>`}
       <div class="board">${cols}</div>`;
   }
@@ -328,7 +381,7 @@
     view.innerHTML = skeleton(3);
     const { items, ai } = await api("/monitors");
     view.innerHTML = `
-      <div class="welcome"><h1>Слежу за любым сайтом</h1>
+      <div class="welcome"><div class="emoji">🛰️</div><h1>Слежу за любым сайтом</h1>
         <p>Вставьте ссылку на страницу с закупками — сайт компании, отраслевую площадку, раздел «Тендеры». ${ai
           ? "Когда появится новое, ИИ вытащит закупки и пришлёт их в бот."
           : "Когда страница изменится, пришлю уведомление в бот."}</p></div>
@@ -341,7 +394,7 @@
           <div class="site-status ${m.error ? "err" : ""}">${m.error ? "Не открывается: " + esc(m.error)
             : m.last_change ? "Последнее изменение: " + esc(deadlineDate(m.last_change)) : "Изменений пока не было"}</div></div>
           <button class="btn btn-quiet" data-del="${m.id}" aria-label="Перестать следить за ${esc(m.title)}">Убрать</button></div>`).join("")
-        : `<p class="empty">Пока ни одного сайта.</p>`}</div>`;
+        : `<div class="empty"><h2>Пока ни одного сайта</h2>Вставьте ссылку выше — например, раздел «Закупки» на сайте компании.</div>`}</div>`;
     view.querySelector("#site-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const btn = e.target.querySelector("button");
@@ -394,7 +447,7 @@
   }
 
   function renderOnboarding() {
-    view.innerHTML = `<div class="welcome">
+    view.innerHTML = `<div class="welcome"><div class="emoji">🦅</div>
       <h1>Найдём тендеры под вашу компанию</h1>
       <p>Укажите, что вы поставляете или какие работы выполняете. Kyran будет присылать только подходящие закупки.</p></div>
       <div class="field"><label>Направления</label><div class="hint">Через запятую или Enter</div><div id="kw"></div></div>
@@ -414,7 +467,7 @@
   function renderProfile() {
     const u = state.me.user;
     view.innerHTML = `
-      <h1 class="section-title" style="font-size:22px;margin-top:10px">Профиль компании</h1>
+      <h1 class="page-title">Профиль компании</h1>
       <div class="field"><label>Направления</label><div class="hint">По ним Kyran подбирает тендеры</div><div id="kw"></div></div>
       <div class="field"><label>Суммы закупок</label><div id="am"></div></div>
       <div class="field"><label for="about">О компании</label><div class="hint">Опыт, лицензии, техника, где работаете — ИИ учтёт при оценке</div>

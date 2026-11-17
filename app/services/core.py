@@ -52,7 +52,11 @@ async def upsert_lots(s: AsyncSession, items: list[LotData]) -> list[Lot]:
         if key in existing or key in seen:
             continue
         seen.add(key)
-        lot = Lot(**asdict(it))
+        data = asdict(it)
+        for field in ("deadline", "published_at"):  # храним в UTC — одинаково в SQLite и PostgreSQL
+            if data[field] is not None:
+                data[field] = aware(data[field]).astimezone(timezone.utc)
+        lot = Lot(**data)
         s.add(lot)
         new.append(lot)
     await s.flush()
