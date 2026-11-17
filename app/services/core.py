@@ -177,7 +177,8 @@ async def search(s: AsyncSession, text: str, profile: Profile | None = None, lim
     """Разовый поиск по открытым лотам (не сохраняется)."""
     p = profile or Profile()
     p = Profile(keywords=[text], min_amount=p.min_amount, max_amount=p.max_amount, regions=p.regions)
-    lots = (await s.execute(select(Lot).where(open_condition()).order_by(Lot.fetched_at.desc()).limit(5000))).scalars().all()
+    lots = (await s.execute(select(Lot).where(open_condition(), Lot.source != "upload")
+                             .order_by(Lot.fetched_at.desc()).limit(5000))).scalars().all()
     hits = []
     for lot in lots:
         h = keyword_hit(lot.title, lot.description, lot.amount, lot.region, p)

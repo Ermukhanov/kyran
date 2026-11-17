@@ -97,7 +97,7 @@ class AgentRun:
             return [lot_brief(l, m.score) for l, m, _ in rows] or "Пока нет подобранных тендеров"
         if name == "analyze_tender":
             lot = await s.get(Lot, int(args["lot_id"]))
-            if not lot:
+            if not lot or (lot.source == "upload" and (lot.raw or {}).get("owner") != u.id):
                 return "Тендер не найден"
             self.analysis_lot = lot.id
             from app.services.analyses import get_or_create_analysis

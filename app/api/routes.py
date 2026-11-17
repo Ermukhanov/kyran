@@ -172,16 +172,17 @@ async def search(q: str, u: User = Depends(get_user), s: AsyncSession = Depends(
     return {"items": items}
 
 
-async def _lot_or_404(s: AsyncSession, lot_id: int) -> Lot:
+async def _lot_or_404(s: AsyncSession, lot_id: int, u: User | None = None) -> Lot:
     lot = await s.get(Lot, lot_id)
-    if not lot:
+    # Закупки из присланных ТЗ видит только тот, кто их прислал
+    if not lot or (lot.source == "upload" and (u is None or (lot.raw or {}).get("owner") != u.id)):
         raise HTTPException(404, "Тендер не найден")
     return lot
 
 
 @router.get("/lots/{lot_id}")
 async def lot_detail(lot_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    lot = await _lot_or_404(s, lot_id)
+    lot = await _lot_or_404(s, lot_id, u)
     match = (await s.execute(select(Match).where(Match.user_id == u.id, Match.lot_id == lot_id))).scalar_one_or_none()
     item = (await s.execute(select(PipelineItem).where(PipelineItem.user_id == u.id, PipelineItem.lot_id == lot_id))).scalar_one_or_none()
     analysis = await get_analysis(s, u, lot_id)
@@ -195,7 +196,7 @@ async def lot_detail(lot_id: int, u: User = Depends(get_user), s: AsyncSession =
 
 @router.post("/lots/{lot_id}/analyze")
 async def analyze(lot_id: int, refresh: bool = False, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    lot = await _lot_or_404(s, lot_id)
+    lot = await _lot_or_404(s, lot_id, u)
     try:
         a = await get_or_create_analysis(s, u, lot, refresh=refresh)
     except billing.LimitError as e:
@@ -214,7 +215,7 @@ class StageIn(BaseModel):
 
 @router.post("/lots/{lot_id}/stage")
 async def set_stage(lot_id: int, body: StageIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    await _lot_or_404(s, lot_id)
+    await _lot_or_404(s, lot_id, u)
     if body.stage is not None and body.stage not in STAGES:
         raise HTTPException(400, f"Стадия должна быть одной из: {', '.join(STAGES)}")
     item = await core.set_stage(s, u, lot_id, body.stage, body.note)
@@ -296,7 +297,7 @@ class AskIn(BaseModel):
 async def lot_ask(lot_id: int, body: AskIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
     from app.ai import analysis as ai_analysis
 
-    lot = await _lot_or_404(s, lot_id)
+    lot = await _lot_or_404(s, lot_id, u)
     a = await get_analysis(s, u, lot_id)
     try:
         answer = await ai_analysis.ask(u, lot, body.question, a.data if a else None, body.history)
@@ -312,7 +313,7 @@ def gen_json(g: GeneratedDoc) -> dict:
 
 @router.get("/lots/{lot_id}/docs")
 async def lot_docs(lot_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    await _lot_or_404(s, lot_id)
+    await _lot_or_404(s, lot_id, u)
     items = (await s.execute(select(GeneratedDoc).where(GeneratedDoc.user_id == u.id, GeneratedDoc.lot_id == lot_id)
                              .order_by(GeneratedDoc.created_at.desc()))).scalars().all()
     latest = {}
@@ -328,7 +329,7 @@ async def lot_docs(lot_id: int, u: User = Depends(get_user), s: AsyncSession = D
 
 @router.post("/lots/{lot_id}/docs/{kind}")
 async def lot_doc_generate(lot_id: int, kind: str, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    lot = await _lot_or_404(s, lot_id)
+    lot = await _lot_or_404(s, lot_id, u)
     try:
         g = await docgen.generate(s, u, lot, kind)
     except billing.LimitError as e:
@@ -377,13 +378,13 @@ async def generated_send(doc_id: int, u: User = Depends(get_user), s: AsyncSessi
 
 @router.get("/lots/{lot_id}/insights")
 async def lot_insights(lot_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    lot = await _lot_or_404(s, lot_id)
+    lot = await _lot_or_404(s, lot_id, u)
     return await insights.lot_insights(s, lot)
 
 
 @router.get("/lots/{lot_id}/readiness")
 async def lot_readiness(lot_id: int, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    lot = await _lot_or_404(s, lot_id)
+    lot = await _lot_or_404(s, lot_id, u)
     a = await get_analysis(s, u, lot_id)
     required = [str(x) for x in (a.data.get("documents") or [])] if a else []
     return await docsvc.readiness(s, u.id, required, lot.deadline)

@@ -66,7 +66,7 @@ def test_agent_tool_loop(tmp_path, monkeypatch):
     assert len(results) == 2 and "matched_now" in results[0]["content"]
 
 
-def test_login_handlers_take_priority(tmp_path):
+def test_login_handlers_take_priority(tmp_path, monkeypatch):
     """Код входа и ссылка с сайта обрабатываются до онбординга (группа -1)."""
     import asyncio
     from types import SimpleNamespace
@@ -77,10 +77,10 @@ def test_login_handlers_take_priority(tmp_path):
     from app.bot import bot as B
     from app.services import login
 
-    config.TELEGRAM_BOT_TOKEN = "123:abc"
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "123:abc")
     app = B.build()
     early = app.handlers[-1]
-    assert len(early) == 2
+    assert len(early) == 3  # ссылка входа, код входа, файлы с ТЗ
     assert B.LOGIN_CODE.match("123 456") and B.LOGIN_CODE.match("123456") and not B.LOGIN_CODE.match("1234567")
 
     db.configure(f"sqlite+aiosqlite:///{tmp_path}/b.db")
@@ -109,4 +109,70 @@ def test_login_handlers_take_priority(tmp_path):
 
     assert asyncio.run(flow())
     assert "подтверждён" in sent[0]
-    config.TELEGRAM_BOT_TOKEN = ""
+
+
+def test_upload_tz_flow(tmp_path, monkeypatch):
+    """Присланное ТЗ (Word) → личная закупка с разбором, видна только владельцу."""
+    import asyncio
+    import io
+    import json
+    from types import SimpleNamespace
+
+    from docx import Document as Docx
+    from fastapi.testclient import TestClient
+
+    from app import db
+    from app.ai import client as ai
+    from app.api.auth import make_link_token
+    from app.services import uploads
+
+    d = Docx()
+    d.add_paragraph("Техническая спецификация. Текущий ремонт кровли здания школы №12. Площадь 1450 м2. " * 20)
+    buf = io.BytesIO(); d.save(buf)
+    files = [("ТЗ кровля.docx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")]
+    prep = uploads.prepare(files)
+    assert "1450" in prep.text and not prep.blocks
+    try:
+        uploads.prepare([("old.doc", b"\xd0\xcf\x11\xe0", "application/msword")])
+        assert False
+    except uploads.UploadError as e:
+        assert ".docx" in str(e)
+
+    answer = {"verdict": "go", "score": 88, "summary": "Подходит.", "scope": ["Ремонт кровли 1450 м²"],
+              "requirements": [{"text": "Лицензия СМР", "source": "п. 2"}], "documents": ["Справка об отсутствии налоговой задолженности"],
+              "risks": [{"text": "Зимний период", "level": "high"}], "questions": ["Срок?"], "next_steps": [],
+              "lot": {"title": "Текущий ремонт кровли школы №12", "customer": "КГУ «Школа №12»", "amount": "38 400 000",
+                      "deadline": "2030-12-01T18:00", "region": "Актюбинская область", "method": "Конкурс", "number": "123-1"}}
+    seen = {}
+
+    async def create(**kw):
+        seen.update(kw)
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(answer, ensure_ascii=False))], usage=None)
+
+    monkeypatch.setattr(ai, "available", lambda: True)
+    monkeypatch.setattr(ai, "client", lambda: SimpleNamespace(messages=SimpleNamespace(create=create)))
+
+    db.configure(f"sqlite+aiosqlite:///{tmp_path}/u.db")
+    from app.main import app
+
+    with TestClient(app) as c:
+        async def run():
+            async with db.Session() as s:
+                from app.services import core
+
+                u = await core.get_or_create_user(s, 4004, "Тест")
+                return await uploads.process(s, u, files)
+        lot, data = asyncio.run(run())
+        assert lot.title == "Текущий ремонт кровли школы №12" and lot.amount == 38_400_000 and lot.deadline
+        assert "1450" in seen["messages"][0]["content"][-1]["text"]
+        from app.bot import texts as T
+
+        report = T.upload_report(lot, data)
+        assert "Рекомендуем участвовать · 88%" in report and "Лицензия СМР" in report and len(report) < 4096
+
+        owner = {"Authorization": "Bearer " + make_link_token(4004)}
+        other = {"Authorization": "Bearer " + make_link_token(5005)}
+        r = c.get(f"/api/lots/{lot.id}", headers=owner).json()
+        assert r["analysis"]["verdict"] == "go" and r["lot"]["stage"] == "saved"
+        assert c.get(f"/api/lots/{lot.id}", headers=other).status_code == 404
+        assert all(i["id"] != lot.id for i in c.get("/api/search?q=кровли", headers=other).json()["items"])

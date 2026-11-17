@@ -20,7 +20,7 @@ from app.ai import agent, client as ai
 from app.api.auth import make_link_token
 from app.bot import texts as T
 from app.db import Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
-from app.services import billing, core, login, monitors
+from app.services import billing, core, docgen, login, monitors, uploads
 from app.services.matcher import parse_keywords
 from app.sources.registry import SOURCES
 
@@ -377,6 +377,122 @@ async def unwatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await reply(update, "Больше не слежу за этим сайтом.")
 
 
+# ── ТЗ, присланное файлом или фото ─────────────────────────
+
+UPLOAD_WAIT = 2.5  # секунды: собрать все файлы альбома в один разбор
+
+
+def upload_buttons(lot: Lot) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton("Техпредложение в Word", callback_data=f"gen:tech:{lot.id}"),
+             InlineKeyboardButton("Запрос разъяснений", callback_data=f"gen:clarify:{lot.id}")],
+            [InlineKeyboardButton("Опись документов", callback_data=f"gen:inventory:{lot.id}")]]
+    if config.PUBLIC_URL:
+        rows[1].append(InlineKeyboardButton("Открыть полностью", web_app=WebAppInfo(app_url(f"#lot/{lot.id}"))))
+    return InlineKeyboardMarkup(rows)
+
+
+async def _file_of(update: Update) -> tuple[str, object, str] | None:
+    """(имя, telegram-объект для скачивания, mime) или None."""
+    m = update.effective_message
+    if m.document:
+        return m.document.file_name or "document", m.document, m.document.mime_type or ""
+    if m.photo:
+        return f"photo_{m.message_id}.jpg", m.photo[-1], "image/jpeg"
+    return None
+
+
+async def on_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    f = await _file_of(update)
+    if not f:
+        return
+    name, obj, mime = f
+    size = getattr(obj, "file_size", 0) or 0
+    if size > uploads.MAX_FILE:
+        await reply(update, f"Файл «{T.escape(name)}» больше 20 МБ — Telegram не даёт боту скачать его. Пришлите его частями.")
+        return
+    group = update.effective_message.media_group_id
+    key = f"upload:{update.effective_chat.id}:{group or update.effective_message.message_id}"
+    batch = context.chat_data.setdefault(key, {"files": [], "scheduled": False})
+    batch["files"].append((name, obj, mime))
+    if not batch["scheduled"]:
+        batch["scheduled"] = True
+        context.job_queue.run_once(process_upload, UPLOAD_WAIT if group else 0.1,
+                                   data={"key": key, "chat_id": update.effective_chat.id,
+                                         "user": (update.effective_user.id, update.effective_user.full_name, update.effective_user.username or "")},
+                                   chat_id=update.effective_chat.id, user_id=update.effective_user.id)
+
+
+async def process_upload(context: ContextTypes.DEFAULT_TYPE) -> None:
+    job = context.job
+    batch = context.chat_data.pop(job.data["key"], None)
+    if not batch:
+        return
+    chat_id = job.data["chat_id"]
+    uid, full_name, username = job.data["user"]
+    n = len(batch["files"])
+    status = await context.bot.send_message(
+        chat_id, f"Получил {n} {'файл' if n == 1 else 'файла' if n < 5 else 'файлов'}. Читаю документацию и готовлю разбор — до минуты…")
+    await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+    try:
+        files = []
+        for name, obj, mime in batch["files"]:
+            tf = await obj.get_file()
+            files.append((name, bytes(await tf.download_as_bytearray()), mime))
+        async with db.Session() as s:
+            user = await core.get_or_create_user(s, uid, full_name, username)
+            lot, data = await uploads.process(s, user, files)
+    except uploads.UploadError as e:
+        await status.edit_text(str(e))
+        return
+    except Exception:
+        log.exception("Разбор присланного ТЗ не удался")
+        await status.edit_text("Не получилось разобрать документ. Попробуйте ещё раз через минуту.")
+        return
+    try:
+        await status.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(chat_id, T.upload_report(lot, data), parse_mode=ParseMode.HTML,
+                                   link_preview_options=NO_PREVIEW, reply_markup=upload_buttons(lot))
+
+
+async def on_generate_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Кнопки «Техпредложение в Word» и др. под разбором."""
+    q = update.callback_query
+    _, kind, lot_id = q.data.split(":", 2)
+    title = docgen.KINDS[kind].title if kind in docgen.KINDS else "Документ"
+    await q.answer(f"Готовлю: {title}")
+    wait = await context.bot.send_message(q.message.chat.id, f"Готовлю «{title}»…")
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, q.from_user.id)
+        lot = await s.get(Lot, int(lot_id))
+        if not lot or (lot.source == "upload" and (lot.raw or {}).get("owner") != user.id):
+            await wait.edit_text("Закупка не найдена.")
+            return
+        try:
+            g = await docgen.generate(s, user, lot, kind)
+        except (billing.LimitError, docgen.GenerationError) as e:
+            await wait.edit_text(str(e))
+            return
+        except Exception:
+            log.exception("Документ из бота не сформирован")
+            await wait.edit_text("Не получилось сформировать документ. Попробуйте ещё раз через минуту.")
+            return
+        missing = docgen.missing_requisites(user)
+    import io as _io
+
+    from telegram import InputFile
+
+    caption = f"{g.title} — проверьте пункты «[уточнить]» и подпишите."
+    if missing:
+        caption += f"\nНе заполнены реквизиты: {', '.join(missing)}. Их можно указать на сайте: Профиль → Компания."
+    await context.bot.send_document(q.message.chat.id, InputFile(_io.BytesIO(g.content), filename=g.filename), caption=caption[:1000])
+    try:
+        await wait.delete()
+    except Exception:
+        pass
+
+
 # ── Кнопки под карточками ──────────────────────────────────
 
 async def on_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -622,6 +738,8 @@ def build() -> Application:
                      ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
+    application.add_handler(CallbackQueryHandler(on_generate_button, pattern=r"^gen:(tech|clarify|cover|inventory|experience):\d+$"))
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, on_upload), group=-1)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, free_text))
 
     jq = application.job_queue

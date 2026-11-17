@@ -67,6 +67,9 @@ def extract_text(content: bytes, name: str) -> str:
 
 async def load_documents(lot: Lot) -> list[tuple[str, str]]:
     """Скачивает документы лота → [(имя, текст)]. Для goszakup нужен токен."""
+    raw = lot.raw or {}
+    if lot.source == "upload" and raw.get("text"):  # ТЗ, присланное в бот
+        return [(", ".join(raw.get("files") or ["ТЗ"]), raw["text"])]
     docs = (lot.documents or [])[:MAX_DOCS]
     if not docs:
         return []
