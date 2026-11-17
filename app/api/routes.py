@@ -275,6 +275,40 @@ async def delete_monitor(monitor_id: int, u: User = Depends(get_user), s: AsyncS
     return {"ok": True}
 
 
+# ── Настройка по БИН ───────────────────────────────────────
+
+class BinIn(BaseModel):
+    bin: str = Field(max_length=20)
+
+
+@router.post("/onboard/preview")
+async def onboard_preview(body: BinIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    from app.services import autoprofile
+
+    try:
+        return await autoprofile.preview(s, u, body.bin)
+    except rivals.CompetitorError as e:
+        raise HTTPException(400, str(e))
+
+
+class BinApplyIn(BaseModel):
+    bin: str = Field(max_length=20)
+    keywords: list[str] = Field(max_length=20)
+    name: str = Field(default="", max_length=300)
+    about: str = Field(default="", max_length=2000)
+
+
+@router.post("/onboard/apply")
+async def onboard_apply(body: BinApplyIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    from app.services import autoprofile
+
+    try:
+        await autoprofile.apply(s, u, body.bin, body.keywords, body.name, body.about)
+    except rivals.CompetitorError as e:
+        raise HTTPException(400, str(e))
+    return {"user": user_json(u), "stats": await core.user_stats(s, u)}
+
+
 # ── Конкуренты ─────────────────────────────────────────────
 
 @router.get("/competitors")

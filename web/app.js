@@ -910,11 +910,58 @@
     return sel;
   }
 
+
+  async function binPreview(raw) {
+    const bin = String(raw).replace(/\D/g, "");
+    const box = document.getElementById("bin-result");
+    if (bin.length !== 12) return toast("БИН — 12 цифр");
+    box.innerHTML = `<div class="loading"><span class="spinner"></span>Ищем закупки, которые выигрывала компания…</div>`;
+    let r;
+    try { r = await api("/onboard/preview", { method: "POST", body: { bin } }); }
+    catch (e) { box.innerHTML = `<p class="desc">${esc(e.message)}</p>`; return; }
+    if (!r.found) {
+      box.innerHTML = `<div class="bin-card"><p class="desc">По этому БИН выигранных закупок не нашлось — возможно, компания ещё не участвовала. Выберите направления вручную ниже — это займёт минуту.</p></div>`;
+      return;
+    }
+    box.innerHTML = `<div class="bin-card">
+      ${r.demo ? `<p class="bin-demo">Демо-режим: портал госзакупок ещё не подключён, поэтому показан пример по данным вымышленной компании ${esc(r.demo_company)}. С подключённым порталом здесь будут ваши реальные закупки.</p>` : ""}
+      <div class="bin-head"><div><div class="cell-title">${esc(r.name || "Компания")}</div><div class="cell-sub">БИН ${esc(r.bin)}</div></div></div>
+      <dl class="bin-stats">
+        <div><dt>Выиграно закупок</dt><dd>${r.wins}</dd></div>
+        <div><dt>На сумму</dt><dd>${esc(moneyShort(r.total))}</dd></div>
+        <div><dt>Обычный договор</dt><dd>${r.typical ? esc(moneyShort(r.typical.median)) : "—"}</dd></div>
+        <div><dt>Открыто сейчас</dt><dd class="ok">${r.open_now}${r.open_total ? `<small> · ${esc(moneyShort(r.open_total))}</small>` : ""}</dd></div>
+      </dl>
+      <div class="form-row"><span class="title">Направления</span><span class="hint">Определены по вашим победам. Уберите лишнее или добавьте своё.</span><div id="bin-kw"></div></div>
+      ${r.regions.length ? `<p class="cell-sub">Где работаете: ${esc(r.regions.join(", "))}</p>` : ""}
+      <div class="form-actions"><button class="btn btn-primary" id="bin-apply">Показать подходящие закупки</button></div>
+    </div>`;
+    const kwb = keywordEditor(r.keywords); box.querySelector("#bin-kw").append(kwb);
+    box.querySelector("#bin-apply").addEventListener("click", async (e) => {
+      const keywords = kwb.value();
+      if (!keywords.length) return toast("Оставьте хотя бы одно направление");
+      e.target.disabled = true; e.target.textContent = "Подбор…";
+      try {
+        await api("/onboard/apply", { method: "POST", body: { bin, keywords, name: r.demo ? "" : r.name, about: r.about || "" } });
+        haptic(); await loadMe(); route();
+      } catch (err) { toast(err.message); e.target.disabled = false; e.target.textContent = "Показать подходящие закупки"; }
+    });
+  }
+
   function renderOnboarding() {
     view.innerHTML = `<div class="onboard">
-      <h1>Что поставляет ваша компания?</h1>
-      <p class="lead">Это первый и единственный шаг настройки. Выберите направления или впишите свои — Kyran сразу покажет открытые закупки по ним.</p>
-      <div class="form">
+      <h1>Настроим Kyran под вашу компанию</h1>
+      <p class="lead">Самый быстрый способ — БИН: Kyran найдёт закупки, которые вы уже выигрывали, и сам определит направления.</p>
+      <section class="bin-box">
+        <form class="bin-form" id="bin-form">
+          <label class="title" for="bin-in">БИН компании</label>
+          <div class="bin-row"><input class="input" id="bin-in" name="bin" inputmode="numeric" maxlength="12" placeholder="12 цифр" autocomplete="off">
+            <button class="btn btn-primary" type="submit">Настроить по БИН</button></div>
+        </form>
+        <div id="bin-result"></div>
+      </section>
+      <div class="or"><span>или выберите направления вручную</span></div>
+      <div class="form" id="manual">
         <div class="form-row"><label class="title">Направления деятельности</label><p class="hint">Нажмите на подходящие или впишите своё и нажмите Enter.</p>
           <div class="ask-chips" id="kw-suggest">${["ремонт кровли", "ремонт школ", "благоустройство", "канцтовары", "бумага", "мебель", "компьютерная техника", "продукты питания", "уборка помещений", "спецодежда", "медицинские расходные материалы", "видеонаблюдение"].map((k) => `<button class="chip" type="button">${k}</button>`).join("")}</div>
           <div id="kw"></div></div>
@@ -926,6 +973,7 @@
         <div><strong>Анализ</strong>ИИ готовит заключение по требованиям, документам и рискам.</div>
         <div><strong>Контроль сроков</strong>Уведомления о закупках с близким сроком подачи.</div>
       </div></div>`;
+    view.querySelector("#bin-form").addEventListener("submit", (e) => { e.preventDefault(); binPreview(view.querySelector("#bin-in").value); });
     const kw = keywordEditor([]); view.querySelector("#kw").append(kw);
     view.querySelectorAll("#kw-suggest .chip").forEach((c) => c.addEventListener("click", () => { kw.add(c.textContent); c.setAttribute("aria-pressed", "true"); }));
     const am = amountSelect(null, null); view.querySelector("#am").append(am);

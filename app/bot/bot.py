@@ -106,7 +106,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def got_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    kws = parse_keywords(update.message.text)
+    text = (update.message.text or "").strip()
+    if re.fullmatch(r"\d{12}", re.sub(r"\s", "", text)):
+        return await onboard_by_bin(update, context, re.sub(r"\s", "", text))
+    kws = parse_keywords(text)
     if not kws:
         await reply(update, T.BAD_KEYWORDS)
         return KEYWORDS
@@ -114,6 +117,36 @@ async def got_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     buttons = [[InlineKeyboardButton(label, callback_data=f"amt:{key}")] for key, (label, _, _) in T.AMOUNTS.items()]
     await reply(update, T.ASK_AMOUNT, reply_markup=InlineKeyboardMarkup(buttons))
     return AMOUNT
+
+
+async def onboard_by_bin(update: Update, context: ContextTypes.DEFAULT_TYPE, bin_: str) -> int:
+    from app.services import autoprofile
+
+    await update.effective_chat.send_action(ChatAction.TYPING)
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id, update.effective_user.full_name)
+        try:
+            r = await autoprofile.preview(s, user, bin_)
+        except rivals.CompetitorError as e:
+            await reply(update, T.escape(str(e)))
+            return KEYWORDS
+        if not r["found"]:
+            await reply(update, "По этому БИН выигранных закупок не нашлось. Напишите направления через запятую, "
+                                "например: <i>ремонт кровли, канцтовары</i>")
+            return KEYWORDS
+        if r["about"] and not user.about:
+            user.about = r["about"]
+        if r["name"] and not r["demo"] and not user.company_name:
+            user.company_name = r["name"]
+        await s.commit()
+    demo = (f"<i>Демо-режим: портал госзакупок ещё не подключён, показан пример по данным компании {T.escape(r['demo_company'])}.</i>\n\n"
+            if r["demo"] else "")
+    await reply(update, f"{demo}Нашёл <b>{r['wins']}</b> выигранных закупок на <b>{T.money(r['total'], short=True)}</b>.\n"
+                        f"Направления: <b>{T.escape(', '.join(r['keywords']))}</b>\n"
+                        "Изменить их можно в любой момент на сайте: Профиль → Подбор закупок.")
+    context.user_data["keywords"] = r["keywords"]
+    context.user_data["amount"] = (None, None)
+    return await finish(update, context, bin_)
 
 
 async def got_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

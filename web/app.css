@@ -375,6 +375,22 @@ body.auth .view { padding: 0; max-width: none; }
 .login-foot { color: var(--muted); font-size: 12.5px; margin: 0; }
 
 
+/* ── Настройка по БИН ─────────────────────── */
+.bin-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; display: grid; gap: 16px; }
+.bin-form { display: grid; gap: 6px; }
+.bin-form .title { font-weight: 500; }
+.bin-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.bin-row .input { max-width: 240px; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.bin-card { display: grid; gap: 14px; padding-top: 16px; border-top: 1px solid var(--line); }
+.bin-demo { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--ink-2); font-size: 13px; }
+.bin-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.bin-stats dt { font-size: 12px; color: var(--muted); }
+.bin-stats dd { margin: 2px 0 0; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bin-stats dd.ok { color: var(--ok); }
+.bin-stats small { font-size: 12px; color: var(--muted); font-weight: 400; }
+.or { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; color: var(--muted); font-size: 13px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
 /* ── Конкуренты ───────────────────────────── */
 .rival-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 .rival { position: relative; display: grid; gap: 14px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); color: inherit; }
@@ -503,6 +519,7 @@ body.auth .view { padding: 0; max-width: none; }
   .kpis-3 { grid-template-columns: 1fr 1fr 1fr; }
   .kpis-3 .kpi:nth-child(3) { border-left: 1px solid var(--line); border-top: none; }
   .form-grid, .plan-now, .plans, .mkt-grid, .report-grid { grid-template-columns: 1fr; }
+  .bin-stats { grid-template-columns: 1fr 1fr; }
   .mkt-kpis > div { padding: 12px 14px; }
   .mkt-kpis b { font-size: 17px; }
   .info-list > div { grid-template-columns: 1fr; gap: 2px; }

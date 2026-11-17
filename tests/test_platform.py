@@ -282,3 +282,24 @@ def test_competitors(client):
     r = client.post("/api/competitors", json={"bin": "900000000005"})
     assert r.status_code == 400 and "лимит" in r.json()["detail"]
     assert client.delete(f"/api/competitors/{top['bin']}").json() == {"ok": True}
+
+
+def test_onboarding_by_bin(client):
+    from app.services.autoprofile import heuristic_keywords
+
+    kws = heuristic_keywords(["Текущий ремонт кровли здания школы", "Ремонт кровли спортзала", "Капитальный ремонт кровли",
+                              "Поставка мебели"])
+    assert "ремонт кровли" in kws
+
+    assert client.post("/api/onboard/preview", json={"bin": "12"}).status_code == 400
+    # Незнакомый БИН в демо-режиме — пример по демо-компании, честно помечен
+    r = client.post("/api/onboard/preview", json={"bin": "180940012345"}).json()
+    assert r["found"] and r["demo"] and r["demo_company"] and r["wins"] > 0 and r["keywords"]
+    assert r["open_now"] >= 1
+    # БИН реального победителя из итогов — без пометки демо, с названием
+    winner = client.get("/api/competitors").json()["suggest"]
+    if winner:
+        w = client.post("/api/onboard/preview", json={"bin": winner[0]["bin"]}).json()
+        assert w["found"] and not w["demo"] and w["name"] == winner[0]["name"]
+    a = client.post("/api/onboard/apply", json={"bin": "180940012345", "keywords": r["keywords"]}).json()
+    assert a["user"]["onboarded"] and a["user"]["company_bin"] == "180940012345" and a["stats"]["open"] >= 1
