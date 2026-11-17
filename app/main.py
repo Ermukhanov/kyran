@@ -1,0 +1,85 @@
+"""Точка входа: FastAPI (API + Mini App) и Telegram-бот в одном процессе.
+
+Запуск: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from app import config, db
+from app.ai import client as ai
+from app.api.routes import router
+from app.services import core
+from app.sources.registry import SOURCES
+
+logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+log = logging.getLogger("kyran")
+WEB = Path(__file__).resolve().parent.parent / "web"
+
+
+async def collect_loop() -> None:
+    """Сбор лотов без бота (например, локально без TELEGRAM_BOT_TOKEN)."""
+    while True:
+        try:
+            async with db.Session() as s:
+                new = await core.collect(s, SOURCES)
+                await core.match_new_lots(s, new)
+        except Exception:
+            log.exception("Сбор не удался")
+        await asyncio.sleep(config.COLLECT_EVERY_MIN * 60)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await db.init_db()
+    log.info("Kyran: источники %s, ИИ %s, веб %s",
+             {s.name: s.enabled for s in SOURCES}, "вкл" if ai.available() else "выкл", config.PUBLIC_URL or "—")
+    bot_app, task = None, None
+    if config.TELEGRAM_BOT_TOKEN:
+        from app.bot.bot import build
+
+        bot_app = build()
+        await bot_app.initialize()
+        await bot_app.start()
+        await bot_app.updater.start_polling(drop_pending_updates=True)
+        log.info("Telegram-бот запущен")
+    else:
+        log.warning("TELEGRAM_BOT_TOKEN не задан — работает только веб и сбор лотов")
+        task = asyncio.create_task(collect_loop())
+    try:
+        yield
+    finally:
+        if bot_app:
+            await bot_app.updater.stop()
+            await bot_app.stop()
+            await bot_app.shutdown()
+        if task:
+            task.cancel()
+
+
+app = FastAPI(title="Kyran", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(router)
+app.mount("/static", StaticFiles(directory=WEB), name="static")
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse("/app")
+
+
+@app.get("/app")
+async def mini_app():
+    return FileResponse(WEB / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/health")
+async def health():
+    return JSONResponse({"ok": True, "sources": {s.name: s.enabled for s in SOURCES}, "ai": ai.available()})
