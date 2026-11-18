@@ -118,7 +118,15 @@ class ZakupSource:
     async def _page(self, session, url: str | None, q: str, offset: int) -> dict[str, Any]:
         if url is None:
             params = {"q": q, "limit": PAGE, "offset": offset, "offer_end_date__gte": datetime.now(timezone.utc).isoformat()}
+            if not getattr(self, "no_ordering", False):
+                params["ordering"] = "-announcement_publish_date"  # новые сверху
             async with session.get(API, params=params) as resp:
+                if resp.status == 400 and "ordering" in params:
+                    # площадка не принимает сортировку — работаем без неё
+                    self.no_ordering = True
+                    params.pop("ordering")
+                    async with session.get(API, params=params) as resp2:
+                        return await self._json(resp2)
                 return await self._json(resp)
         async with session.get(url) as resp:
             return await self._json(resp)
@@ -168,6 +176,14 @@ class ZakupSource:
             self.last_ok, self.last_error = datetime.now(timezone.utc), ""
         log.info("zakup.gov.kz: %d открытых лотов по %d запросам", len(found), min(len(queries), MAX_QUERIES))
         return list(found.values())
+
+    async def fetch_fresh(self) -> list[LotData]:
+        """Быстрый проход: только первая страница по каждому направлению."""
+        lots = await self.search(self.keywords, max_pages=1)
+        pubs = [l.published_at for l in lots if l.published_at]
+        if pubs:
+            log.info("zakup.gov.kz быстрый проход: %d лотов, самый свежий опубликован %s", len(lots), max(pubs).isoformat())
+        return lots
 
     async def diagnose(self, q: str, with_date: bool = True) -> str:
         """Для админа: что реально отвечает площадка на запрос."""

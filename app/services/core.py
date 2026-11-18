@@ -122,6 +122,24 @@ async def collect(s: AsyncSession, sources: list[Source]) -> list[Lot]:
     return new
 
 
+async def collect_fresh(s: AsyncSession, sources: list[Source]) -> list[Lot]:
+    """Быстрый сбор: первые страницы источников, умеющих fetch_fresh (раз в несколько минут)."""
+    new: list[Lot] = []
+    for src in sources:
+        if not src.enabled or not hasattr(src, "fetch_fresh"):
+            continue
+        if getattr(src, "wants_keywords", False):
+            src.keywords = await all_keywords(s)
+            if not src.keywords:
+                continue
+        try:
+            new += await upsert_lots(s, await src.fetch_fresh())
+        except Exception:
+            log.exception("Быстрый сбор %s упал", src.name)
+    await s.commit()
+    return new
+
+
 # ── Подбор ─────────────────────────────────────────────────
 
 async def match_user(s: AsyncSession, user: User, lots: list[Lot]) -> list[Match]:

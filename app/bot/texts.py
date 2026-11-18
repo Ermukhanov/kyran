@@ -82,6 +82,27 @@ def time_left(deadline: datetime | None) -> str:
     return f"до {when}, осталось {days} дн."
 
 
+def fresh_head(lot: Lot) -> str:
+    """Шапка мгновенного уведомления: насколько свежий тендер."""
+    from datetime import datetime, timezone
+
+    pub = lot.published_at
+    if pub is None:
+        return "🆕 <b>Новый тендер</b>\n"
+    if pub.tzinfo is None:
+        pub = pub.replace(tzinfo=timezone.utc)
+    minutes = int((datetime.now(timezone.utc) - pub).total_seconds() // 60)
+    if minutes < 0:
+        minutes = 0
+    if minutes < 60:
+        ago = f"{minutes} мин назад"
+    elif minutes < 24 * 60:
+        ago = f"{minutes // 60} ч назад"
+    else:
+        return "🆕 <b>Новый для вас тендер</b>\n"
+    return f"🆕 <b>Опубликован {ago}</b> — успейте подготовиться первыми\n"
+
+
 def card(lot: Lot, score: int | None = None, reason: str = "") -> str:
     lines = []
     if lot.is_demo:

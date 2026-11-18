@@ -410,3 +410,14 @@ def test_remember_org_twice_does_not_break_session(client):
             await s.commit()
             return await results.bin_of(s, 4242)
     assert asyncio.run(run()) == "180340009999"
+
+
+def test_fresh_head_shows_age():
+    from datetime import timedelta
+
+    from app.bot import texts as T
+    from app.db import Lot, utcnow
+
+    assert "мин назад" in T.fresh_head(Lot(title="x", published_at=utcnow() - timedelta(minutes=7)))
+    assert "Новый для вас" in T.fresh_head(Lot(title="x", published_at=utcnow() - timedelta(days=3)))
+    assert "Новый тендер" in T.fresh_head(Lot(title="x"))

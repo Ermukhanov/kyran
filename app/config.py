@@ -50,6 +50,9 @@ AI_SCORE_LIMIT = int(os.environ.get("AI_SCORE_LIMIT", "30"))  # сколько �
 # ── Расписание ──
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "Asia/Almaty"))
 COLLECT_EVERY_MIN = int(os.environ.get("COLLECT_EVERY_MIN", "60"))
+# Быстрая проверка свежих лотов (первые страницы) — чтобы клиент узнавал о тендере первым
+FAST_EVERY_MIN = int(os.environ.get("FAST_EVERY_MIN", "5"))
+INSTANT_PER_RUN = int(os.environ.get("INSTANT_PER_RUN", "8"))  # максимум мгновенных карточек за один проход
 WEBSITE_EVERY_MIN = int(os.environ.get("WEBSITE_EVERY_MIN", "180"))
 DIGEST_HOUR = int(os.environ.get("DIGEST_HOUR", "9"))
 DIGEST_SIZE = int(os.environ.get("DIGEST_SIZE", "8"))

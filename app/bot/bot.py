@@ -617,9 +617,12 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ── Фоновые задачи ─────────────────────────────────────────
 
-async def send_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, lot: Lot, m: Match) -> bool:
+async def send_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, lot: Lot, m: Match, fresh: bool = False) -> bool:
     try:
-        await context.bot.send_message(chat_id, T.card(lot, m.score, m.reason), parse_mode=ParseMode.HTML,
+        text = T.card(lot, m.score, m.reason)
+        if fresh:
+            text = T.fresh_head(lot) + text
+        await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML,
                                        link_preview_options=NO_PREVIEW, reply_markup=lot_buttons(lot))
         return True
     except Exception:
@@ -627,27 +630,41 @@ async def send_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, lot: Lot, 
         return False
 
 
+async def _notify_new(context: ContextTypes.DEFAULT_TYPE, s, new: list[Lot], label: str) -> None:
+    """Каждый новый подходящий тендер — сразу в Telegram, пока конкуренты не успели."""
+    matches = await core.match_new_lots(s, new)
+    log.info("%s: новых лотов %d, подборок для %d пользователей", label, len(new), len(matches))
+    for user_id, ms in matches.items():
+        user = await s.get(User, user_id)
+        if not user or not user.notify or not billing.current_plan(user)[1]:
+            continue
+        sent = 0
+        for m in sorted(ms, key=lambda x: -x.score):
+            if sent >= config.INSTANT_PER_RUN:
+                break  # остальные придут в утренней подборке
+            lot = await s.get(Lot, m.lot_id)
+            deadline = db.aware(lot.deadline)
+            if deadline and deadline <= utcnow():
+                continue
+            if await send_card(context, user_id, lot, m, fresh=True):
+                m.notified, sent = True, sent + 1
+    await s.commit()
+
+
+async def fresh_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Раз в несколько минут: первые страницы по направлениям -> мгновенные уведомления."""
+    async with db.Session() as s:
+        new = await core.collect_fresh(s, SOURCES)
+        if new:
+            await _notify_new(context, s, new, "Быстрый сбор")
+
+
 async def collect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Забрать новые лоты, подобрать всем, срочные отправить сразу."""
+    """Полный сбор раз в час: всё, что не попало в быстрый проход."""
     async with db.Session() as s:
         new = await core.collect(s, SOURCES)
-        if not new:
-            return
-        matches = await core.match_new_lots(s, new)
-        log.info("Новых лотов: %d, подборок для %d пользователей", len(new), len(matches))
-        for user_id, ms in matches.items():
-            user = await s.get(User, user_id)
-            if not user or not user.notify or not billing.current_plan(user)[1]:
-                continue
-            urgent_until = utcnow() + timedelta(days=config.URGENT_DAYS)
-            sent = 0
-            for m in sorted(ms, key=lambda x: -x.score):
-                lot = await s.get(Lot, m.lot_id)
-                deadline = db.aware(lot.deadline)
-                if deadline and deadline <= urgent_until and sent < 5:
-                    if await send_card(context, user_id, lot, m):
-                        m.notified, sent = True, sent + 1
-        await s.commit()
+        if new:
+            await _notify_new(context, s, new, "Полный сбор")
 
 
 async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -906,6 +923,7 @@ def build() -> Application:
 
     jq = application.job_queue
     jq.run_repeating(collect_job, interval=config.COLLECT_EVERY_MIN * 60, first=5)
+    jq.run_repeating(fresh_job, interval=config.FAST_EVERY_MIN * 60, first=90)
     jq.run_repeating(monitors_job, interval=config.WEBSITE_EVERY_MIN * 60, first=120)
     jq.run_daily(digest_job, time=dtime(hour=config.DIGEST_HOUR, tzinfo=config.TZ))
     jq.run_repeating(reminders_job, interval=3600, first=60)
