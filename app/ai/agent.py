@@ -72,6 +72,7 @@ class AgentRun:
             p = core.profile_of(u)
             p.min_amount = args.get("min_amount", p.min_amount)
             p.max_amount = args.get("max_amount", p.max_amount)
+            await core.fetch_for(s, [args["query"]], timeout=15)
             hits = await core.search(s, args["query"], p, limit=8)
             self.shown_lots += [l.id for l, _, _ in hits]
             return [lot_brief(l, sc) for l, sc, _ in hits] or "Ничего не найдено"

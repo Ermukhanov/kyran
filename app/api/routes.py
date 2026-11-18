@@ -165,6 +165,7 @@ async def feed(q: str = "", urgent: bool = False, offset: int = 0,
 async def search(q: str, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
     if len(q.strip()) < 3:
         return {"items": []}
+    await core.fetch_for(s, [q.strip()], timeout=15)  # живой поиск по zakup.gov.kz, результат кэшируется в базе
     hits = await core.search(s, q.strip(), core.profile_of(u), limit=30)
     items = []
     for lot, score, reason in hits:
