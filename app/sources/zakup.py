@@ -202,3 +202,66 @@ class ZakupSource:
 
     async def fetch(self) -> list[LotData]:
         return await self.search(self.keywords)
+
+
+BASE = API.split("/public/")[0]  # https://zakup.gov.kz/api/core/api
+
+
+async def probe() -> str:
+    """Разведка открытых адресов платформы: договоры, организации, предметы. Только для логов."""
+    import json
+
+    import aiohttp
+
+    out: list[str] = []
+
+    async def get(path: str, params: dict | None = None):
+        async with aiohttp.ClientSession(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=40)) as s:
+            async with s.get(BASE + path, params=params or {}) as r:
+                body = await r.text()
+                try:
+                    return r.status, json.loads(body)
+                except ValueError:
+                    return r.status, body[:200]
+
+    def keys(x) -> str:
+        if isinstance(x, dict):
+            return ", ".join(sorted(x.keys()))[:700]
+        return type(x).__name__
+
+    def short(x, n=500) -> str:
+        return json.dumps(x, ensure_ascii=False, default=str)[:n]
+
+    try:
+        st, lots = await get("/public/lots/", {"q": "кабель", "limit": 1, "offer_end_date__gte": datetime.now(timezone.utc).isoformat()})
+        row = (lots.get("results") or [{}])[0] if isinstance(lots, dict) else {}
+        out.append(f"LOT customers={short(row.get('customers'), 300)} enstru_key={row.get('enstru_key')} delivery={short(row.get('delivery_addresses'), 200)}")
+        st, cl = await get("/public/contracts/", {"limit": 2, "system_id": 1, "sign_date__gte": "2026-11-01"})
+        out.append(f"CONTRACTS {st} count={cl.get('count') if isinstance(cl, dict) else '?'}")
+        c = (cl.get("results") or [{}])[0] if isinstance(cl, dict) else {}
+        out.append("contract keys: " + keys(c))
+        out.append("contract sample: " + short(c, 900))
+        if c.get("id"):
+            st, det = await get(f"/public/contracts/{c['id']}/")
+            out.append(f"DETAIL {st} keys: " + keys(det))
+            out.append("detail orgs: " + short({k: det.get(k) for k in ("supplier_organization", "customer_organization", "name_ru", "contract_number")} if isinstance(det, dict) else det, 600))
+            st, sub = await get(f"/public/contracts/{c['id']}/subjects/")
+            first = (sub.get("results") if isinstance(sub, dict) else sub) or [{}]
+            out.append(f"SUBJECTS {st} first: " + short(first[0], 700))
+            sup = c.get("supplier_organization_id")
+            if sup:
+                st, bysup = await get("/public/contracts/", {"limit": 1, "supplier_organization_id": sup})
+                out.append(f"BY SUPPLIER {st} count={bysup.get('count') if isinstance(bysup, dict) else bysup}")
+            codes = c.get("enstru_code") or []
+            if codes:
+                st, byc = await get("/public/contracts/", {"limit": 1, "enstru_code__startswith": str(codes[0])[:6], "sign_date__gte": "2026-01-01"})
+                out.append(f"BY ENSTRU {str(codes[0])[:6]} {st} count={byc.get('count') if isinstance(byc, dict) else byc}")
+        st, q = await get("/public/contracts/", {"limit": 1, "q": "кабель", "sign_date__gte": "2026-01-01"})
+        out.append(f"CONTRACTS q=кабель {st} count={q.get('count') if isinstance(q, dict) else q}")
+        st, q2 = await get("/public/contracts/", {"limit": 1, "search": "кабель", "sign_date__gte": "2026-01-01"})
+        out.append(f"CONTRACTS search=кабель {st} count={q2.get('count') if isinstance(q2, dict) else q2}")
+        st, org = await get("/public/organizations/", {"q": "180940012345", "limit": 1})
+        out.append(f"ORGS {st} sample: " + short(org, 400))
+    except Exception as e:
+        out.append(f"ошибка: {type(e).__name__}: {e}")
+    return "\n".join(out)

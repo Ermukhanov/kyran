@@ -47,8 +47,9 @@ async def lifespan(_: FastAPI):
     async def zakup_selftest():
         z = next((x for x in SOURCES if x.name == "zakup" and x.enabled), None)
         if z:
-            for q, d in (("кабель", True),):
-                log.info("Самопроверка zakup.gov.kz (%s, фильтр по сроку: %s):\n%s", q, d, await z.diagnose(q, d))
+            from app.sources.zakup import probe
+
+            log.info("Разведка zakup.gov.kz:\n%s", await probe())
     selftest = asyncio.create_task(zakup_selftest())
     if config.TELEGRAM_BOT_TOKEN:
         from app.bot.bot import build, post_init
