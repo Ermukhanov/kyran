@@ -134,21 +134,58 @@ async def list_for(s: AsyncSession, user: User) -> list[dict]:
     return out
 
 
-async def suggest(s: AsyncSession, user: User, days: int = 180, limit: int = 6) -> list[dict]:
-    """Кто чаще всего выигрывает в ваших направлениях — кандидаты для слежки."""
+async def suggest(s: AsyncSession, user: User, days: int = 180, limit: int = 8) -> list[dict]:
+    """Кто чаще всего выигрывает в ваших направлениях — кандидаты для слежки (и потенциальные клиенты).
+
+    Похожесть: код ЕНС ТРУ из подходящих вам открытых лотов или слова направлений в предмете договора.
+    БИН недостающих победителей дочитывается из карточек договоров.
+    """
+    from collections import Counter as _C
+
+    from app.db import Lot, Match
+    from app.services import results
+
+    lots = (await s.execute(select(Lot).join(Match, Match.lot_id == Lot.id)
+                            .where(Match.user_id == user.id, Lot.source == "zakup").limit(300))).scalars().all()
+    codes = [c for c, _ in _C("".join(ch for ch in str((l.raw or {}).get("enstru") or "") if ch.isdigit())[:6]
+                               for l in lots).most_common(6) if len(c) == 6]
+    if codes:
+        await results.ensure_recent_for_codes(s, codes, days=90)
+    code_set = set(codes)
     since = utcnow() - timedelta(days=days)
     followed = set((await s.execute(select(Competitor.bin).where(Competitor.user_id == user.id))).scalars())
-    awards = (await s.execute(select(Award).where(Award.status == "done", Award.awarded_at >= since, Award.winner_bin != "")
-                              .limit(5000))).scalars().all()
+    awards = (await s.execute(select(Award).where(Award.status == "done", Award.awarded_at >= since).limit(20000))).scalars().all()
+    if any(not a.is_demo for a in awards):
+        awards = [a for a in awards if not a.is_demo]
     profile = profile_of(user)
     agg: dict[str, dict] = {}
     for a in awards:
-        if a.winner_bin in followed or a.winner_bin == user.company_bin or not keyword_hit(a.title, "", a.amount, a.region, profile):
+        if not a.winner:
             continue
-        d = agg.setdefault(a.winner_bin, {"bin": a.winner_bin, "name": a.winner, "wins": 0, "total": 0.0})
+        if not ((a.enstru or "")[:6] in code_set or keyword_hit(a.title, "", a.amount, a.region, profile)):
+            continue
+        key = a.winner_bin or f"org:{a.supplier_org_id}" if (a.winner_bin or a.supplier_org_id) else f"name:{a.winner}"
+        d = agg.setdefault(key, {"bin": a.winner_bin, "name": a.winner, "wins": 0, "total": 0.0, "org_id": a.supplier_org_id, "award": a})
         d["wins"] += 1
         d["total"] += a.price or 0
-    return sorted(agg.values(), key=lambda x: (-x["total"], -x["wins"]))[:limit]
+    top = sorted(agg.values(), key=lambda x: (-x["total"], -x["wins"]))
+    out = []
+    missing = [d for d in top[:limit * 2] if not d["bin"] and d["award"].source == "zakup"]
+    if missing and results.enabled():
+        try:
+            async with results.Client() as c:
+                await results.enrich(s, c, [d["award"] for d in missing], limit=len(missing))
+            await s.commit()
+            for d in missing:
+                d["bin"] = d["award"].winner_bin or await results.bin_of(s, d["org_id"])
+        except Exception:
+            pass
+    for d in top:
+        if d["bin"] and d["bin"] not in followed and d["bin"] != user.company_bin:
+            out.append({"bin": d["bin"], "name": d["name"], "wins": d["wins"], "total": d["total"]})
+        if len(out) >= limit:
+            break
+    return out
 
 
 async def new_wins(s: AsyncSession) -> list[tuple[int, Competitor, list[Award]]]:
