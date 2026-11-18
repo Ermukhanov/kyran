@@ -149,7 +149,10 @@ async def suggest(s: AsyncSession, user: User, days: int = 365, limit: int = 8, 
     from app.db import Lot, Match
     from app.services import results
 
-    words = [query] if query.strip() else list(user.keywords or [])[:4]
+    kws = user.keywords or []
+    if isinstance(kws, str):
+        kws = [k for k in kws.replace(";", ",").split(",")]
+    words = [query] if query.strip() else [str(k).strip() for k in kws if len(str(k).strip()) >= 3][:4]
     codes: list[str] = []
     for w in words:
         for c in await results.codes_for_query(w):

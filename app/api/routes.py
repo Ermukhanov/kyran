@@ -1,6 +1,7 @@
 """REST API для Mini App."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,6 +23,7 @@ from app.services.matcher import parse_keywords
 from app.sources.registry import SOURCES
 
 router = APIRouter(prefix="/api")
+log = logging.getLogger("kyran.api")
 
 
 async def get_session():
@@ -316,7 +318,14 @@ async def onboard_apply(body: BinApplyIn, u: User = Depends(get_user), s: AsyncS
 
 @router.get("/competitors")
 async def competitors_list(u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
-    return {"items": await rivals.list_for(s, u), "suggest": await rivals.suggest(s, u)}
+    items = await rivals.list_for(s, u)
+    try:
+        suggest = await rivals.suggest(s, u)
+    except Exception as e:  # подсказки — не повод ломать страницу
+        log.warning("rivals: подсказки не построены: %s", e)
+        await s.rollback()
+        suggest = []
+    return {"items": items, "suggest": suggest}
 
 
 @router.get("/competitors/search")
@@ -324,7 +333,12 @@ async def competitors_search(q: str = "", u: User = Depends(get_user), s: AsyncS
     q = " ".join(q.split())[:100]
     if len(q) < 3:
         raise HTTPException(400, "Введите направление, например «мебель» или «ремонт кровли»")
-    return {"q": q, "items": await rivals.suggest(s, u, query=q, limit=15)}
+    try:
+        return {"q": q, "items": await rivals.suggest(s, u, query=q, limit=15)}
+    except Exception as e:
+        log.warning("rivals: поиск «%s» не удался: %s", q, e)
+        await s.rollback()
+        raise HTTPException(502, "zakup.gov.kz сейчас не ответил. Попробуйте ещё раз через минуту.")
 
 
 class FollowIn(BaseModel):

@@ -107,8 +107,15 @@ async def remember_org(s: AsyncSession, org: dict | None) -> None:
     name = str(org.get("name_ru") or org.get("name") or "")[:500]
     if ref:
         ref.bin, ref.name, ref.updated_at = bin_, name or ref.name, utcnow()
-    else:
-        s.add(OrgRef(org_id=int(org["id"]), bin=bin_, name=name, updated_at=utcnow()))
+        return
+    # Отдельная точка сохранения: одна и та же организация может встретиться дважды
+    # подряд или прийти из параллельного запроса — дубль не должен ломать всю сессию.
+    from sqlalchemy.exc import IntegrityError
+    try:
+        async with s.begin_nested():
+            s.add(OrgRef(org_id=int(org["id"]), bin=bin_, name=name, updated_at=utcnow()))
+    except IntegrityError:
+        pass
 
 
 async def bin_of(s: AsyncSession, org_id: int | None) -> str:

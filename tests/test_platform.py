@@ -397,3 +397,16 @@ def test_rivals_search_by_direction_without_open_lots(client, monkeypatch):
     items = r.json()["items"]
     assert items and items[0]["bin"] == "180340001111" and items[0]["wins"] >= 2
     assert client.get("/api/competitors/search", params={"q": "ab"}).status_code == 400
+
+
+def test_remember_org_twice_does_not_break_session(client):
+    from app.services import results
+
+    async def run():
+        async with db.Session() as s:
+            org = {"id": 4242, "iin_bin": "180340009999", "name_ru": "ТОО Тест"}
+            await results.remember_org(s, org)
+            await results.remember_org(s, dict(org))
+            await s.commit()
+            return await results.bin_of(s, 4242)
+    assert asyncio.run(run()) == "180340009999"
