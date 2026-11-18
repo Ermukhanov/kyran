@@ -319,6 +319,14 @@ async def competitors_list(u: User = Depends(get_user), s: AsyncSession = Depend
     return {"items": await rivals.list_for(s, u), "suggest": await rivals.suggest(s, u)}
 
 
+@router.get("/competitors/search")
+async def competitors_search(q: str = "", u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    q = " ".join(q.split())[:100]
+    if len(q) < 3:
+        raise HTTPException(400, "Введите направление, например «мебель» или «ремонт кровли»")
+    return {"q": q, "items": await rivals.suggest(s, u, query=q, limit=15)}
+
+
 class FollowIn(BaseModel):
     bin: str = Field(max_length=20)
     name: str = Field(default="", max_length=500)

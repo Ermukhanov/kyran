@@ -664,6 +664,17 @@
     catch (e) { toast(e.message); if (btn) btn.disabled = false; if (e.message.includes("лимит")) location.hash = "#profile/plan"; return false; }
   }
 
+  function rivalRows(list, emptyText) {
+    if (!list.length) return `<p class="hint" style="margin:6px 0">${esc(emptyText)}</p>`;
+    return `<table class="grid stack"><tbody>${list.map((x) => `<tr><td><div class="cell-title">${esc(x.name)}</div><div class="cell-sub">БИН ${esc(x.bin)}</div></td>
+      <td class="right nowrap">${x.wins} ${plural(x.wins, "победа", "победы", "побед")}</td><td class="right nowrap"><span class="amount">${esc(moneyShort(x.total))}</span></td>
+      <td class="right nowrap"><a class="btn btn-sm" href="#rival/${x.bin}">Досье</a> <button class="btn btn-sm btn-primary" data-follow="${x.bin}" data-name="${esc(x.name)}">Следить</button></td></tr>`).join("")}</tbody></table>`;
+  }
+
+  function bindFollowButtons(root) {
+    root.querySelectorAll("[data-follow]").forEach((b) => b.addEventListener("click", async () => { if (await followBin(b.dataset.follow, b.dataset.name, b)) renderRivals(); }));
+  }
+
   async function renderRivals() {
     view.innerHTML = `<div class="loading"><span class="spinner"></span>Загрузка…</div>`;
     const { items, suggest } = await api("/competitors");
@@ -684,10 +695,15 @@
           <dl class="rival-stats"><div><dt>Побед за год</dt><dd>${x.wins}</dd></div><div><dt>Сумма</dt><dd>${esc(moneyShort(x.total))}</dd></div><div><dt>Последняя</dt><dd>${x.last_win ? esc(dateShort(x.last_win)) : "—"}</dd></div></dl>
         </a>`).join("")}</div>`
         : `<div class="empty"><h2>Вы пока ни за кем не следите</h2><p>Добавьте БИН конкурента или выберите из тех, кто чаще всего выигрывает в ваших направлениях.</p></div>`}
-      ${suggest.length ? `<section class="panel" style="margin-top:20px"><div class="panel-head"><h2>Чаще всего выигрывают в ваших направлениях</h2><span class="hint">за полгода</span></div>
-        <table class="grid stack"><tbody>${suggest.map((x) => `<tr><td><div class="cell-title">${esc(x.name)}</div><div class="cell-sub">БИН ${esc(x.bin)}</div></td>
-          <td class="right nowrap">${x.wins} ${plural(x.wins, "победа", "победы", "побед")}</td><td class="right nowrap"><span class="amount">${esc(moneyShort(x.total))}</span></td>
-          <td class="right nowrap"><a class="btn btn-sm" href="#rival/${x.bin}">Досье</a> <button class="btn btn-sm btn-primary" data-follow="${x.bin}" data-name="${esc(x.name)}">Следить</button></td></tr>`).join("")}</tbody></table></section>` : ""}`;
+      <section class="panel" style="margin-top:20px"><div class="panel-head"><h2>Кто выигрывает в направлении</h2><span class="hint">договоры за год, zakup.gov.kz</span></div>
+        <form class="toolbar" id="rival-search" style="margin-bottom:14px">
+          <input class="input" style="flex:1;min-width:220px" name="q" maxlength="100" placeholder="Например: мебель, ремонт кровли, канцтовары" aria-label="Направление">
+          <button class="btn btn-primary" type="submit">Найти компании</button>
+        </form>
+        <div id="rival-results">${rivalRows(suggest, (state.me.user.keywords || []).length
+          ? "По вашим направлениям пока ничего не нашлось. Проверьте написание в профиле или введите направление выше."
+          : "Введите направление выше — покажем компании, которые чаще всего выигрывают, с БИН.")}</div>
+      </section>`;
     view.querySelector("#follow-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -695,7 +711,19 @@
       if (bin.length !== 12) return toast("БИН — 12 цифр");
       if (await followBin(bin, fd.get("name"))) renderRivals();
     });
-    view.querySelectorAll("[data-follow]").forEach((b) => b.addEventListener("click", async () => { if (await followBin(b.dataset.follow, b.dataset.name, b)) renderRivals(); }));
+    bindFollowButtons(view);
+    view.querySelector("#rival-search").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = String(new FormData(e.target).get("q") || "").trim();
+      const box = view.querySelector("#rival-results");
+      if (q.length < 3) return toast("Введите направление, хотя бы 3 буквы");
+      box.innerHTML = `<div class="loading"><span class="spinner"></span>Ищу договоры по «${esc(q)}» на zakup.gov.kz — до 30 секунд…</div>`;
+      try {
+        const r = await api("/competitors/search?q=" + encodeURIComponent(q));
+        box.innerHTML = rivalRows(r.items, `По «${q}» за год не нашлось подписанных договоров. Попробуйте другое слово: «мебель», «кровля», «бумага».`);
+        bindFollowButtons(box);
+      } catch (err) { box.innerHTML = `<p class="hint">${esc(err.message)}</p>`; }
+    });
     view.querySelectorAll("[data-unfollow]").forEach((b) => b.addEventListener("click", async (e) => {
       e.preventDefault(); e.stopPropagation();
       const card = b.closest(".rival");

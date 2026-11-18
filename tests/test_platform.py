@@ -354,3 +354,46 @@ def test_zakup_contracts_to_awards(client, monkeypatch):
     assert a.winner_bin == "260840013449" and a.customer_bin == "120540019776" and a.amount == 180000.0 and a.enstru.startswith("310112")
     assert ins["available"] and ins["similar_count"] >= 1 and ins["price"]["median_discount"] > 0
     assert ins["customer"]["total"] >= 1 and ins["competitors"][0]["bin"] == "260840013449"
+
+
+def test_rivals_search_by_direction_without_open_lots(client, monkeypatch):
+    """«мебель» -> коды ЕНС ТРУ по всем лотам (и завершённым) -> договоры -> победители с БИН."""
+    from app.services import results
+
+    lot_row = {"id": 1, "name_ru": "Мебель школьная", "enstru_key": "310112.900.000047", "status_name": "Завершен"}
+    contract = {"id": 555001, "announcement_name": "Поставка мебели", "contract_price_with_vat": 500000.0,
+                "customer_organization_name": "КГУ Школа №1", "customer_organization_id": 11,
+                "supplier_organization_name": "ТОО \"Мебель Плюс\"", "supplier_organization_id": 777,
+                "enstru_code": ["310112.900.000000"], "sign_date": "2026-11-10", "status_name": "Действует"}
+    detail = {"buy_total_with_vat": 520000.0,
+              "supplier_organization": {"id": 777, "iin_bin": "180340001111", "name_ru": "ТОО \"Мебель Плюс\""},
+              "customer_organization": {"id": 11, "iin_bin": "990140002222", "name_ru": "КГУ Школа №1"}}
+    calls = []
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def get(self, path, params=None):
+            calls.append((path, dict(params or {})))
+            if path == "/public/lots/":
+                assert "offer_end_date__gte" not in (params or {})
+                return {"results": [lot_row, lot_row]}
+            return detail
+
+        async def list(self, path, params, max_items):
+            calls.append((path, dict(params)))
+            assert params.get("enstru_code__startswith") == "310112"
+            return [contract, {**contract, "id": 555002}]
+
+    monkeypatch.setenv("ZAKUP_ENABLED", "true")
+    monkeypatch.setattr(results, "Client", FakeClient)
+    results._codes_cache.clear()
+    r = client.get("/api/competitors/search", params={"q": "мебель"})
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert items and items[0]["bin"] == "180340001111" and items[0]["wins"] >= 2
+    assert client.get("/api/competitors/search", params={"q": "ab"}).status_code == 400

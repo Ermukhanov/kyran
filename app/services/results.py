@@ -256,3 +256,42 @@ async def ensure_recent_for_codes(s: AsyncSession, codes: list[str], days: int =
         if len(prefix) == 6:
             await _slice(s, f"recent:{prefix}:{days}", {"enstru_code__startswith": prefix, "sign_date__gte": _since(days)}, 300,
                          ttl=timedelta(hours=6), details=20)
+
+
+# ── Коды ЕНС ТРУ по словам ─────────────────────────────────
+_codes_cache: dict[str, tuple[datetime, list[str]]] = {}
+
+
+async def codes_for_query(q: str, top: int = 4) -> list[str]:
+    """Самые частые товарные группы (6 цифр ЕНС ТРУ) среди ВСЕХ лотов по запросу,
+    включая завершённые. Работает, даже когда открытых лотов сейчас нет."""
+    from collections import Counter
+
+    q = " ".join((q or "").split()).lower()[:120]
+    if not q or not enabled():
+        return []
+    hit = _codes_cache.get(q)
+    if hit and hit[0] > utcnow() - FRESH:
+        return hit[1]
+    codes: Counter = Counter()
+    try:
+        async with Client() as c:
+            data = await c.get("/public/lots/", {"q": q, "limit": PAGE, "offset": 0})
+        rows = data.get("results") if isinstance(data, dict) else data
+        for r in rows or []:
+            if not isinstance(r, dict):
+                continue
+            keys = [r.get("enstru_key")] + [e.get("code") or e.get("enstru_code") or e.get("key")
+                                            for e in (r.get("enstrus") or []) if isinstance(e, dict)]
+            for k in keys:
+                digits = "".join(ch for ch in str(k or "") if ch.isdigit())[:6]
+                if len(digits) == 6:
+                    codes[digits] += 1
+                    break
+    except Exception as e:
+        log.warning("zakup: коды для «%s» не получены: %s", q, e)
+        return []
+    out = [code for code, _ in codes.most_common(top)]
+    _codes_cache[q] = (utcnow(), out)
+    log.info("zakup: «%s» -> коды ЕНС ТРУ %s", q, out)
+    return out
