@@ -42,9 +42,10 @@ def lot_buttons(lot: Lot) -> InlineKeyboardMarkup:
     if config.PUBLIC_URL:
         row.append(InlineKeyboardButton("Разбор", web_app=WebAppInfo(app_url(f"#lot/{lot.id}"))))
     row.append(InlineKeyboardButton("В воронку", callback_data=f"save:{lot.id}"))
-    rows = [row, [InlineKeyboardButton("Не интересно", callback_data=f"hide:{lot.id}")]]
+    rows = [row, [InlineKeyboardButton("📄 Документы заявки", callback_data=f"docs:{lot.id}")],
+            [InlineKeyboardButton("Не интересно", callback_data=f"hide:{lot.id}")]]
     if lot.url:
-        rows[1].append(InlineKeyboardButton("На портале", url=lot.url))
+        rows[2].append(InlineKeyboardButton("На портале", url=lot.url))
     return InlineKeyboardMarkup(rows)
 
 
@@ -508,6 +509,19 @@ async def process_upload(context: ContextTypes.DEFAULT_TYPE) -> None:
                                    link_preview_options=NO_PREVIEW, reply_markup=upload_buttons(lot))
 
 
+async def on_docs_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Кнопка «Документы заявки» под карточкой тендера: выбор документа прямо в Telegram."""
+    q = update.callback_query
+    lot_id = int(q.data.split(":", 1)[1])
+    await q.answer()
+    rows = [[InlineKeyboardButton(k.title, callback_data=f"gen:{code}:{lot_id}")] for code, k in docgen.KINDS.items()]
+    await context.bot.send_message(
+        q.message.chat.id,
+        "Какой документ подготовить по этой закупке? Пришлю файл Word сюда же.\n"
+        "<i>Совет: перешлите сюда файл ТЗ — тогда техпредложение будет точнее.</i>",
+        parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
+
+
 async def on_generate_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Кнопки «Техпредложение в Word» и др. под разбором."""
     q = update.callback_query
@@ -917,6 +931,7 @@ def build() -> Application:
                      ("zakup", zakup_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
+    application.add_handler(CallbackQueryHandler(on_docs_button, pattern=r"^docs:\d+$"))
     application.add_handler(CallbackQueryHandler(on_generate_button, pattern=r"^gen:(tech|clarify|cover|inventory|experience):\d+$"))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, on_upload), group=-1)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, free_text))
