@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#141414">
-<title>Ketchunez — донеры, бургеры и пицца на Сатпаева · заказ онлайн</title>
-<meta name="description" content="Ketchunez, Актобе, Сатпаева 10. Закажите донер, бургер или пиццу онлайн — заказ сразу придёт в WhatsApp.">
+<meta name="theme-color" content="#E3262E">
+<title>Ketchunez — заказ онлайн · Актобе</title>
+<meta name="description" content="Ketchunez, Актобе, ул. Сатпаева, 10, 1 этаж. Закажите онлайн — заказ сразу придёт в WhatsApp.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800;900&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{--red:#E3262E;--red-d:#C21A22;--mus:#FFC83D;--ink:#141414;--paper:#FFF8EC;--line:#F0E3C8;--muted:#6F6656}
+:root{--red:#E3262E;--red-d:#E3262E;--mus:#FFC83D;--ink:#141414;--paper:#FFF8EC;--line:#F0E3C8;--muted:#6F6656}
 *{box-sizing:border-box;margin:0;padding:0}
 [hidden]{display:none!important}
 html{scroll-behavior:smooth}
@@ -129,7 +129,7 @@ dialog::backdrop{background:rgba(20,20,20,.55)}
 <body>
 <header>
   <div class="wrap">
-    <nav><a class="logo" href="#">KETCHU<b>NEZ</b></a><span class="open" id="openNow"><i></i>Открыто до 24:00</span></nav>
+    <nav><a class="logo" href="#">KETCHU<b>NEZ</b></a><span class="open" id="openNow"><i></i>Открыто</span></nav>
     <div class="hero">
       <div>
         <h1 class="disp"><span class="drop" style="animation-delay:.1s;display:inline-block">Донер</span><br><span class="drop" style="animation-delay:.25s;display:inline-block">без</span> <em class="drop" style="animation-delay:.4s">очереди</em></h1>
@@ -146,11 +146,11 @@ dialog::backdrop{background:rgba(20,20,20,.55)}
   <div class="drips" aria-hidden="true" id="drips"></div>
 </header>
 
-<div class="strip" aria-hidden="true"><div class="track"><span>Донеры ✸ Бургеры ✸ Чикены ✸ Пицца ✸ Фри ✸ Студенческие комбо ✸</span><span>Донеры ✸ Бургеры ✸ Чикены ✸ Пицца ✸ Фри ✸ Студенческие комбо ✸</span></div></div>
+<div class="strip" aria-hidden="true"><div class="track"><span>Донеры ✸ Бургеры ✸ Чикены ✸ Пицца ✸ Фри ✸</span><span>Донеры ✸ Бургеры ✸ Чикены ✸ Пицца ✸ Фри ✸</span></div></div>
 
 <main class="wrap">
   <div class="how">
-    <div><span class="n">1</span><b>Выберите</b><p>Добавьте донеры и пиццу в корзину кнопкой «+».</p></div>
+    <div><span class="n">1</span><b>Выберите</b><p>Добавьте блюда в корзину кнопкой «+».</p></div>
     <div><span class="n">2</span><b>Отправьте</b><p>Заказ сам соберётся в сообщение WhatsApp — просто нажмите «Отправить».</p></div>
     <div><span class="n">3</span><b>Заберите</b><p>Мы подтвердим заказ и время. Без очереди и без «не так поняли».</p></div>
   </div>
@@ -159,7 +159,7 @@ dialog::backdrop{background:rgba(20,20,20,.55)}
     <h2 class="disp h2">Меню</h2>
     <nav class="cats" id="cats" aria-label="Разделы меню"></nav>
     <div id="menuList"></div>
-    <p class="note">Цены из открытых источников, могут отличаться. В рабочей версии заведение обновляет меню само.</p>
+    <p class="note">Цены из 2ГИС, могут отличаться. В рабочей версии меню обновляете вы сами.</p>
   </section>
 
   <div class="info">
@@ -191,7 +191,7 @@ dialog::backdrop{background:rgba(20,20,20,.55)}
 
 <script>
 // ── Данные заведения: для другого клиента меняется только этот блок ──
-const SHOP={name:'Ketchunez',wa:'77051855529',phone:'+77051855529',close:24,open:11};
+const SHOP={"wa": "77051855529", "phone": "+77051855529", "open": 11, "close": 24};
 const MENU=[
  {cat:'Донеры',items:[['Донер-студент с курицей',790],['Донер-студент ассорти',990],['Донер-студент с говядиной',890],['Донер-стандарт куриный',1190],['Донер-стандарт говяжий',1290],['Донер-стандарт ассорти',1290],['Мексиканский донер куриный',1390],['Мексиканский донер говяжий',1490],['МегалаДонер куриный',1590],['МегалаДонер говяжий',1890],['МегалаДонер ассорти',1890]]},
  {cat:'Бургеры',items:[['Острый куриный бургер с индейкой',1590],['Острый говяжий бургер с индейкой',1690],['Бургер куриный с яичной глазуньей',1490],['Бургер говяжий с яичной глазуньей',1590],['Бургер куриный с грибами и сыром',1490],['Бургер говяжий с грибами и сыром',1590]]},
@@ -234,8 +234,9 @@ $('orderForm').onsubmit=e=>{e.preventDefault();const f=e.target,{ids,sum}=render
     `\nИтого: ${money(sum)}\n${mode}${mode==='Доставка'?': '+f.addr.value:''}\nИмя: ${f.name.value}\nТелефон: ${f.phone.value}`+(f.note.value?`\nКомментарий: ${f.note.value}`:'');
   window.open('https://wa.me/'+SHOP.wa+'?text='+encodeURIComponent(msg),'_blank')};
 $('callBtn').href='tel:'+SHOP.phone;$('waBtn').href='https://wa.me/'+SHOP.wa;
-const h=new Date(Date.now()+5*3600e3).getUTCHours(),isOpen=h>=SHOP.open&&h<SHOP.close;
-$('openNow').innerHTML=isOpen?`<i></i>Открыто до ${SHOP.close}:00`:`<i style="background:#FFC83D"></i>Откроемся в ${SHOP.open}:00`;
+const h=new Date(Date.now()+5*3600e3).getUTCHours(),p=n=>String(n%24).padStart(2,'0')+':00',
+ allDay=SHOP.open===0&&SHOP.close===24,isOpen=allDay||(SHOP.close>SHOP.open?(h>=SHOP.open&&h<SHOP.close):(h>=SHOP.open||h<SHOP.close));
+$('openNow').innerHTML=allDay?'<i></i>Открыто круглосуточно':isOpen?`<i></i>Открыто до ${p(SHOP.close)}`:`<i style="background:#FFC83D"></i>Откроемся в ${p(SHOP.open)}`;
 // подсветка раздела меню при прокрутке
 const io=new IntersectionObserver(es=>es.forEach(en=>{if(en.isIntersecting){const i=en.target.id.slice(3);document.querySelectorAll('#cats a').forEach((a,k)=>a.classList.toggle('on',k==i))}}),{rootMargin:'-30% 0px -60% 0px'});
 renderMenu();renderCart();document.querySelectorAll('.cat-h').forEach(h=>io.observe(h));
