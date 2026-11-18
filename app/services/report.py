@@ -23,10 +23,25 @@ async def weekly(s: AsyncSession, user: User, days: int = 7) -> dict:
     since = now - timedelta(days=days)
     profile = profile_of(user)
 
+    # Реальные итоги: коды ЕНС ТРУ из подходящих пользователю открытых лотов → свежие договоры по этим кодам
+    from collections import Counter as _C
+
+    from app.services import results
+
+    lots = (await s.execute(select(Lot).join(Match, Match.lot_id == Lot.id)
+                            .where(Match.user_id == user.id, Lot.source == "zakup").limit(300))).scalars().all()
+    codes = [c for c, _ in _C("".join(ch for ch in str((l.raw or {}).get("enstru") or "") if ch.isdigit())[:6] for l in lots).most_common(6) if len(c) == 6]
+    if codes:
+        await results.ensure_recent_for_codes(s, codes, days=min(days, 31))
+
     awards = (await s.execute(select(Award).where(Award.awarded_at >= since).order_by(Award.awarded_at.desc()).limit(5000))).scalars().all()
+    if any(not a.is_demo for a in awards):
+        awards = [a for a in awards if not a.is_demo]
+    code_set = set(codes)
     missed, own = [], []
     for a in awards:
-        if not keyword_hit(a.title, "", a.amount, a.region, profile):
+        by_code = (a.enstru or "")[:6] in code_set and bool(code_set)
+        if not by_code and not keyword_hit(a.title, "", a.amount, a.region, profile):
             continue
         if user.company_bin and a.winner_bin == user.company_bin:
             own.append(a)

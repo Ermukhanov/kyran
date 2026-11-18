@@ -76,7 +76,20 @@ def _award_json(a: Award) -> dict:
 
 async def lot_insights(s: AsyncSession, lot: Lot, *, min_sim: float = 0.5) -> dict:
     stems = _stems(lot.title)
+    raw = lot.raw or {}
+    prefix = "".join(ch for ch in str(raw.get("enstru") or "") if ch.isdigit())[:6]
+    cust_org = raw.get("customer_org_id")
+    if lot.source == "zakup":
+        from app.services import results
+
+        if len(prefix) == 6:
+            await results.ensure_enstru(s, prefix)
+        await results.ensure_customer(s, cust_org)
     conds = []
+    if len(prefix) == 6:
+        conds.append(Award.enstru.startswith(prefix))
+    if cust_org:
+        conds.append(Award.customer_org_id == cust_org)
     if lot.customer_bin:
         conds.append(Award.customer_bin == lot.customer_bin)
     if lot.customer:
@@ -86,10 +99,15 @@ async def lot_insights(s: AsyncSession, lot: Lot, *, min_sim: float = 0.5) -> di
         conds.append(Award.title.ilike(f"%{st}%"))
     if not conds:
         return {"available": False}
-    rows = (await s.execute(select(Award).where(or_(*conds)).order_by(Award.awarded_at.desc()).limit(800))).scalars().all()
+    rows = (await s.execute(select(Award).where(or_(*conds)).order_by(Award.awarded_at.desc()).limit(1500))).scalars().all()
 
-    customer_hist = [a for a in rows if (lot.customer_bin and a.customer_bin == lot.customer_bin) or a.customer == lot.customer]
-    similar = [a for a in rows if similarity(stems, a.title) >= min_sim]
+    customer_hist = [a for a in rows if (lot.customer_bin and a.customer_bin == lot.customer_bin) or a.customer == lot.customer
+                     or (cust_org and a.customer_org_id == cust_org)]
+    similar = [a for a in rows if (len(prefix) == 6 and (a.enstru or "").startswith(prefix)) or similarity(stems, a.title) >= min_sim]
+    # Реальные данные важнее демо: если есть реальные итоги — демо не смешиваем
+    if any(not a.is_demo for a in similar):
+        similar = [a for a in similar if not a.is_demo]
+        customer_hist = [a for a in customer_hist if not a.is_demo]
     if not similar and not customer_hist:
         return {"available": False}
 

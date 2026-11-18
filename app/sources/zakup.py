@@ -82,6 +82,8 @@ def row_to_lot(row: dict[str, Any]) -> LotData | None:
         published_at=parse_dt(pick(row, "announcement_publish_date", "publish_date")),
         url=f"{SITE}/announcement/{ann}#lot-{lot_id}" if ann else SITE,
         raw={"platform": system.get("name") or "", "platform_id": system.get("id"), "lot_number": pick(row, "lot_number"),
+             "enstru": str(pick(row, "enstru_key", default="")),
+             "customer_org_id": next((c.get("id") for c in (row.get("customers") or []) if isinstance(c, dict) and c.get("id")), None),
              "announcement_number": pick(row, "announcement_number"), "status": pick(row, "status_name")},
         is_demo=False,
     )

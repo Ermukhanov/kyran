@@ -49,6 +49,11 @@ async def follow(s: AsyncSession, user: User, bin_value: str, name: str = "") ->
         await billing.check(s, user, "competitors")
     except billing.LimitError as e:
         raise CompetitorError(str(e))
+    from app.services import results
+
+    org = await results.ensure_supplier(s, bin_)
+    if org and not name:
+        name = org.name
     last = (await s.execute(select(func.max(Award.id)).where(Award.winner_bin == bin_))).scalar() or 0
     c = Competitor(user_id=user.id, bin=bin_, name=(name.strip() or await known_name(s, bin_))[:500], last_award_id=last)
     s.add(c)
@@ -74,9 +79,14 @@ def _award_json(a: Award) -> dict:
 
 async def dossier(s: AsyncSession, user: User, bin_: str, days: int = 365) -> dict:
     """Досье: победы за период, суммы, снижение, заказчики, регионы, помесячно, пересечение с вашими направлениями."""
+    from app.services import results
+
+    org = await results.ensure_supplier(s, bin_, days=max(days, 365))
     since = utcnow() - timedelta(days=days)
     wins = (await s.execute(select(Award).where(Award.winner_bin == bin_, Award.status == "done", Award.awarded_at >= since)
                             .order_by(Award.awarded_at.desc()))).scalars().all()
+    if any(not a.is_demo for a in wins):
+        wins = [a for a in wins if not a.is_demo]
     profile = profile_of(user)
     overlap = [a for a in wins if keyword_hit(a.title, "", a.amount, a.region, profile)]
     discounts = [1 - a.price / a.amount for a in wins if a.amount and a.price]
@@ -97,7 +107,7 @@ async def dossier(s: AsyncSession, user: User, bin_: str, days: int = 365) -> di
         if m == 0:
             y, m = y - 1, 12
     series.reverse()
-    name = wins[0].winner if wins else await known_name(s, bin_)
+    name = (org.name if org else "") or (wins[0].winner if wins else await known_name(s, bin_))
     return {
         "bin": bin_, "name": name, "days": days,
         "wins": len(wins), "total": sum(a.price or 0 for a in wins),
@@ -143,8 +153,11 @@ async def suggest(s: AsyncSession, user: User, days: int = 180, limit: int = 6) 
 
 async def new_wins(s: AsyncSession) -> list[tuple[int, Competitor, list[Award]]]:
     """Новые победы всех отслеживаемых конкурентов (и сдвигает отметку last_award_id)."""
+    from app.services import results
+
     out = []
     for c in (await s.execute(select(Competitor))).scalars().all():
+        await results.ensure_supplier(s, c.bin, days=30, ttl=timedelta(minutes=50))
         wins = (await s.execute(select(Award).where(Award.winner_bin == c.bin, Award.id > c.last_award_id, Award.status == "done")
                                 .order_by(Award.id))).scalars().all()
         if wins:

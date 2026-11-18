@@ -187,6 +187,29 @@ class Award(Base):
     status: Mapped[str] = mapped_column(String(20), default="done")   # done / failed (не состоялась)
     awarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+    # zakup.gov.kz: id организаций на платформе и код ЕНС ТРУ — для поиска похожих и досье
+    supplier_org_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    customer_org_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    enstru: Mapped[str] = mapped_column(String(40), default="", server_default="", index=True)
+    url: Mapped[str] = mapped_column(String(300), default="", server_default="")
+
+
+class OrgRef(Base):
+    """Организация на zakup.gov.kz: id платформы ↔ БИН."""
+    __tablename__ = "org_refs"
+
+    org_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    bin: Mapped[str] = mapped_column(String(12), default="", index=True)
+    name: Mapped[str] = mapped_column(String(500), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FetchMark(Base):
+    """Когда последний раз загружали срез данных (чтобы не ходить на площадку при каждом открытии)."""
+    __tablename__ = "fetch_marks"
+
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Document(Base):

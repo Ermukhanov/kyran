@@ -40,6 +40,11 @@ async def collect_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await db.init_db()
+    if not config.DEMO_MODE:
+        async with db.Session() as s:
+            removed = await core.purge_demo(s)
+        if removed:
+            log.info("Демо выключено: удалено демо-записей %d", removed)
     log.info("Kyran: источники %s, ИИ %s, веб %s",
              {s.name: s.enabled for s in SOURCES}, "вкл" if ai.available() else "выкл", config.PUBLIC_URL or "—")
     bot_app, task = None, None
@@ -47,9 +52,7 @@ async def lifespan(_: FastAPI):
     async def zakup_selftest():
         z = next((x for x in SOURCES if x.name == "zakup" and x.enabled), None)
         if z:
-            from app.sources.zakup import probe
-
-            log.info("Разведка zakup.gov.kz:\n%s", await probe())
+            log.info("Самопроверка zakup.gov.kz:\n%s", await z.diagnose("кабель", True))
     selftest = asyncio.create_task(zakup_selftest())
     if config.TELEGRAM_BOT_TOKEN:
         from app.bot.bot import build, post_init

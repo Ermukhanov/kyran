@@ -303,3 +303,54 @@ def test_onboarding_by_bin(client):
         assert w["found"] and not w["demo"] and w["name"] == winner[0]["name"]
     a = client.post("/api/onboard/apply", json={"bin": "180940012345", "keywords": r["keywords"]}).json()
     assert a["user"]["onboarded"] and a["user"]["company_bin"] == "180940012345" and a["stats"]["open"] >= 1
+
+
+def test_zakup_contracts_to_awards(client, monkeypatch):
+    """Договоры zakup.gov.kz (форма ответа снята с сервера 18.11.2026) → итоги, БИН, снижение, рынок по коду ЕНС ТРУ."""
+    from app.services import insights, results
+
+    contract = {"id": 116771977, "announcement_name": "Мебель для кабинета информатики", "contract_price_with_vat": 163556.52,
+                "customer_organization_name": "КГУ \"Средняя школа №297\"", "customer_organization_id": 7905,
+                "supplier_organization_name": "ТОО \"AST 1KZ\"", "supplier_organization_id": 62004606,
+                "enstru_code": ["310112.900.000000"], "sign_date": "2026-11-17", "status_name": "Действует",
+                "purchase_method_name": "Запрос ценовых предложений"}
+    detail = {"buy_total_with_vat": 180000.0,
+              "supplier_organization": {"id": 62004606, "iin_bin": "260840013449", "name_ru": "ТОО \"AST 1KZ\""},
+              "customer_organization": {"id": 7905, "iin_bin": "120540019776", "name_ru": "КГУ"}}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def get(self, path, params=None):
+            if path.startswith("/public/organizations/"):
+                return {"results": [{"id": 62004606, "iin_bin": "260840013449", "name_ru": "ТОО \"AST 1KZ\""}]}
+            return detail
+
+        async def list(self, path, params, max_items):
+            return [contract, {**contract, "id": 2, "contract_price_with_vat": 90000.0, "status_name": "Расторгнут"}]
+
+    monkeypatch.setenv("ZAKUP_ENABLED", "true")
+    monkeypatch.setattr(results, "Client", FakeClient)
+
+    async def run():
+        async with db.Session() as s:
+            org = await results.ensure_supplier(s, "260840013449")
+            from app.db import Award, Lot
+
+            a = (await s.execute(select(Award).where(Award.ext_id == "116771977"))).scalar_one()
+            lot = Lot(source="zakup", ext_id="L1", title="Парты ученические", amount=200000, raw={"enstru": "310112.900.000047", "customer_org_id": 7905})
+            s.add(lot)
+            await s.commit()
+            ins = await insights.lot_insights(s, lot)
+            return org, a, ins
+    from sqlalchemy import select
+
+    org, a, ins = asyncio.run(run())
+    assert org.org_id == 62004606 and org.bin == "260840013449"
+    assert a.winner_bin == "260840013449" and a.customer_bin == "120540019776" and a.amount == 180000.0 and a.enstru.startswith("310112")
+    assert ins["available"] and ins["similar_count"] >= 1 and ins["price"]["median_discount"] > 0
+    assert ins["customer"]["total"] >= 1 and ins["competitors"][0]["bin"] == "260840013449"

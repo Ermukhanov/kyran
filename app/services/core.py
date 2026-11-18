@@ -281,3 +281,19 @@ async def get_or_create_user(s: AsyncSession, tg_id: int, name: str = "", userna
         user.name = name
         await s.commit()
     return user
+
+
+async def purge_demo(s: AsyncSession) -> int:
+    """Демо выключено — убираем вымышленные закупки и итоги вместе со ссылками на них."""
+    from sqlalchemy import delete
+
+    from app.db import Analysis, Award, GeneratedDoc, Match, PipelineItem
+
+    ids = list((await s.execute(select(Lot.id).where(Lot.is_demo.is_(True)))).scalars())
+    if ids:
+        for model in (Match, PipelineItem, Analysis, GeneratedDoc):
+            await s.execute(delete(model).where(model.lot_id.in_(ids)))
+        await s.execute(delete(Lot).where(Lot.id.in_(ids)))
+    awards = (await s.execute(delete(Award).where(Award.is_demo.is_(True)))).rowcount or 0
+    await s.commit()
+    return len(ids) + awards

@@ -97,8 +97,14 @@ async def preview(s: AsyncSession, user: User, bin_value: str) -> dict:
     """Что Kyran узнал о компании по БИН. Профиль не меняет."""
     bin_ = clean_bin(bin_value)
     demo_of = ""
+    from app.services import results
+
+    org = await results.ensure_supplier(s, bin_, days=730)
     wins = (await s.execute(select(Award).where(Award.winner_bin == bin_, Award.status == "done")
                             .order_by(Award.awarded_at.desc()).limit(200))).scalars().all()
+    if not wins and org:
+        wins = (await s.execute(select(Award).where(Award.supplier_org_id == org.org_id, Award.status == "done")
+                                .order_by(Award.awarded_at.desc()).limit(200))).scalars().all()
     if not wins and config.DEMO_MODE:
         demo_bins = list((await s.execute(select(Award.winner_bin).where(Award.is_demo.is_(True), Award.winner_bin != "")
                                           .distinct())).scalars())
@@ -115,6 +121,8 @@ async def preview(s: AsyncSession, user: User, bin_value: str) -> dict:
             name = (info or {}).get("name", "")
         except Exception:
             log.exception("Карточка участника не получена")
+    if not name and org:
+        name = org.name
     if not name and wins and not demo_of:
         name = wins[0].winner
 
