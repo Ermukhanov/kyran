@@ -53,10 +53,40 @@ async def lifespan(_: FastAPI):
              {s.name: s.enabled for s in SOURCES}, "вкл" if ai.available() else "выкл", config.PUBLIC_URL or "—")
     bot_app, task = None, None
 
+    async def sk_probe():
+        """Разведка API поиска Самрук-Казыны (zakup.sk.kz) — что отвечает и в каком виде."""
+        import json as _j
+
+        import aiohttp
+        url = "https://zakup.sk.kz/eprocsearch/api/external/4dv3rts/filter"
+        hdr = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Content-Type": "application/json",
+               "Origin": "https://zakup.sk.kz", "Referer": "https://zakup.sk.kz/"}
+        tries = [("?page=0&size=5", {"query": "мебель", "advertStatus": "PUBLISHED", "lotStatus": "PUBLISHED"}),
+                 ("?page=0&size=5", {"query": "мебель", "advertStatus": ["PUBLISHED"], "lotStatus": ["PUBLISHED"]}),
+                 ("", {"query": "мебель"})]
+        try:
+            async with aiohttp.ClientSession(headers=hdr, timeout=aiohttp.ClientTimeout(total=30)) as s:
+                for qs, body in tries:
+                    async with s.post(url + qs, json=body) as r:
+                        t = await r.text()
+                        info = f"HTTP {r.status}, {len(t)} байт, заголовки: {dict((k, v) for k, v in r.headers.items() if k.lower() in ('x-total-count', 'link', 'content-range', 'content-type'))}"
+                        try:
+                            d = _j.loads(t)
+                            if isinstance(d, list) and d:
+                                info += f"; список {len(d)}; первый: {_j.dumps(d[0], ensure_ascii=False)[:1500]}"
+                            else:
+                                info += "; " + t[:600]
+                        except ValueError:
+                            info += "; " + t[:300]
+                        log.info("Разведка zakup.sk.kz %s %s -> %s", qs, body, info)
+        except Exception as e:
+            log.warning("Разведка zakup.sk.kz: %s", e)
+
     async def zakup_selftest():
         z = next((x for x in SOURCES if x.name == "zakup" and x.enabled), None)
         if z:
             log.info("Самопроверка zakup.gov.kz:\n%s", await z.diagnose("кабель", True))
+            await sk_probe()
             from app.services import results
             log.info("Самопроверка конкурентов: «мебель» -> %s, «ремонт кровли» -> %s",
                      await results.codes_for_query("мебель"), await results.codes_for_query("ремонт кровли"))
