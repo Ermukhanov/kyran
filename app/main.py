@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -61,6 +62,17 @@ async def lifespan(_: FastAPI):
             log.info("Самопроверка конкурентов: «мебель» -> %s, «ремонт кровли» -> %s",
                      await results.codes_for_query("мебель"), await results.codes_for_query("ремонт кровли"))
     selftest = asyncio.create_task(zakup_selftest())
+
+    async def leads_once():
+        if os.environ.get("KYRAN_LEADS_SCAN", "1") != "1":
+            return
+        await asyncio.sleep(20)
+        try:
+            from app.services.leads import find_aktobe_suppliers
+            await find_aktobe_suppliers()
+        except Exception:
+            log.exception("Лиды: поиск не удался")
+    leads_task = asyncio.create_task(leads_once())
     if config.TELEGRAM_BOT_TOKEN:
         from app.bot.bot import build, post_init
 
