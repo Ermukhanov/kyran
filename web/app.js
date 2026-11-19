@@ -906,7 +906,7 @@
 
   // ── Профиль и онбординг ─────────────────────────
   function keywordEditor(initial) {
-    const kws = [...initial];
+    const kws = (Array.isArray(initial) ? initial : String(initial || "").split(",")).map((x) => String(x).trim().toLowerCase()).filter((x) => x.length >= 3);
     const box = document.createElement("div");
     box.className = "kw-box";
     const draw = () => {

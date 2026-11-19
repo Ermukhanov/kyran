@@ -33,9 +33,18 @@ def query_stems(text: str) -> set[str]:
     return meaningful or stems
 
 
-def parse_keywords(text: str) -> list[str]:
-    """«ремонт кровли, канцтовары; бумага А4» → ['ремонт кровли', 'канцтовары', 'бумага а4']"""
-    return [p.strip().lower() for p in re.split(r"[,;\n]+", text or "") if p.strip()][:30]
+def parse_keywords(text) -> list[str]:
+    """«ремонт кровли, канцтовары; бумага А4» → ['ремонт кровли', 'канцтовары', 'бумага а4'].
+    Принимает строку или список. Отбрасывает обрывки короче 3 символов и голые числа:
+    по ним площадка ничего не находит (было: направления «9», «0», «4»… по одной цифре)."""
+    if isinstance(text, (list, tuple, set)):
+        text = ", ".join(str(x) for x in text)
+    out: list[str] = []
+    for part in re.split(r"[,;\n]+", str(text or "")):
+        k = " ".join(part.split()).lower()
+        if len(k) >= 3 and not k.replace(" ", "").isdigit() and k not in out:
+            out.append(k)
+    return out[:30]
 
 
 def phrase_matches(phrase: str, lot_words: set[str]) -> bool:

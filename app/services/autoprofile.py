@@ -86,7 +86,7 @@ async def ai_keywords(titles: list[str]) -> tuple[list[str], str] | None:
             '\n\nВерни JSON: {"keywords": ["направление", ...] (3–6 штук), "about": "одно предложение"}',
             max_tokens=400,
         )
-        kws = parse_keywords(", ".join(str(k) for k in data.get("keywords") or []))
+        kws = parse_keywords(data.get("keywords") or [])
         return (kws[:6], str(data.get("about") or "")[:400]) if kws else None
     except Exception:
         log.exception("ИИ не сформулировал направления")
@@ -152,7 +152,7 @@ async def preview(s: AsyncSession, user: User, bin_value: str) -> dict:
 
 async def apply(s: AsyncSession, user: User, bin_value: str, keywords: list[str], name: str = "", about: str = "") -> User:
     bin_ = clean_bin(bin_value)
-    kws = parse_keywords(", ".join(keywords))
+    kws = parse_keywords(keywords)
     if not kws:
         raise CompetitorError("Укажите хотя бы одно направление.")
     user.company_bin = bin_

@@ -139,7 +139,7 @@ async def update_me(body: ProfileIn, u: User = Depends(get_user), s: AsyncSessio
     rematch = False
     if "keywords" in data:
         kw = data.pop("keywords") or []
-        u.keywords = parse_keywords(kw if isinstance(kw, str) else ", ".join(kw))
+        u.keywords = parse_keywords(kw)
         rematch = True
     for field in ("min_amount", "max_amount", "regions"):
         if field in data:

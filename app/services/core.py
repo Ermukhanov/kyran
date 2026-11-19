@@ -301,6 +301,22 @@ async def get_or_create_user(s: AsyncSession, tg_id: int, name: str = "", userna
     return user
 
 
+async def fix_keywords(s: AsyncSession) -> int:
+    """Чистит направления, сохранённые обрывками (по одной цифре/букве) или строкой вместо списка."""
+    from app.services.matcher import parse_keywords
+
+    fixed = 0
+    for u in (await s.execute(select(User))).scalars():
+        raw = u.keywords or []
+        clean = parse_keywords(raw)
+        if not isinstance(raw, list) or clean != list(raw):
+            u.keywords = clean
+            fixed += 1
+    if fixed:
+        await s.commit()
+    return fixed
+
+
 async def purge_demo(s: AsyncSession) -> int:
     """Демо выключено — убираем вымышленные закупки и итоги вместе со ссылками на них."""
     from sqlalchemy import delete

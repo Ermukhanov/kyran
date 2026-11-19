@@ -40,6 +40,10 @@ async def collect_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await db.init_db()
+    async with db.Session() as s:
+        n = await core.fix_keywords(s)
+    if n:
+        log.info("Исправлены направления у пользователей: %d", n)
     if not config.DEMO_MODE:
         async with db.Session() as s:
             removed = await core.purge_demo(s)

@@ -13,3 +13,10 @@ def test_remote_queries_use_word_stems():
 def test_phrase_still_filtered_locally():
     assert phrase_matches("ремонт кровли", words("Текущий ремонт кровельного покрытия школы"))
     assert not phrase_matches("ремонт кровли", words("Кровельные материалы"))
+
+
+def test_parse_keywords_drops_fragments():
+    from app.services.matcher import parse_keywords
+    assert parse_keywords(["9", "0", "4", "4", "6", "5"]) == []
+    assert parse_keywords("904465, мебель") == ["мебель"]
+    assert parse_keywords(["Ремонт  кровли", "мебель", "мебель"]) == ["ремонт кровли", "мебель"]
