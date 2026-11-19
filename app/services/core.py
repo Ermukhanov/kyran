@@ -129,9 +129,7 @@ async def collect_fresh(s: AsyncSession, sources: list[Source]) -> list[Lot]:
         if not src.enabled or not hasattr(src, "fetch_fresh"):
             continue
         if getattr(src, "wants_keywords", False):
-            src.keywords = await all_keywords(s)
-            if not src.keywords:
-                continue
+            src.keywords = await all_keywords(s)  # пусто — не беда: свежие лоты придут всё равно
         try:
             new += await upsert_lots(s, await src.fetch_fresh())
         except Exception:

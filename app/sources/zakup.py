@@ -31,6 +31,7 @@ SITE = "https://zakup.gov.kz"
 PAGE = 50
 MAX_PAGES = int(os.environ.get("ZAKUP_MAX_PAGES", "4"))        # на одно направление
 MAX_QUERIES = int(os.environ.get("ZAKUP_MAX_QUERIES", "60"))    # направлений за один сбор
+LATEST_PAGES = int(os.environ.get("ZAKUP_LATEST_PAGES", "4"))   # свежих страниц по 50 лотов за быстрый проход
 PAUSE = float(os.environ.get("ZAKUP_PAUSE", "0.6"))             # секунд между запросами
 
 
@@ -133,7 +134,9 @@ class ZakupSource:
 
     async def _page(self, session, url: str | None, q: str, offset: int) -> dict[str, Any]:
         if url is None:
-            params = {"q": q, "limit": PAGE, "offset": offset, "offer_end_date__gte": datetime.now(timezone.utc).isoformat()}
+            params = {"limit": PAGE, "offset": offset, "offer_end_date__gte": datetime.now(timezone.utc).isoformat()}
+            if q:
+                params["q"] = q
             if not getattr(self, "no_ordering", False):
                 params["ordering"] = "-announcement_publish_date"  # новые сверху
             async with session.get(API, params=params) as resp:
@@ -194,9 +197,46 @@ class ZakupSource:
         log.info("zakup.gov.kz: %d открытых лотов по %d запросам", len(found), min(len(queries), MAX_QUERIES))
         return list(found.values())
 
+    async def fetch_latest(self, pages: int = LATEST_PAGES) -> list[LotData]:
+        """Все только что опубликованные лоты площадки, без поиска по словам.
+        Подходят ли они кому-то, решает наш подбор — так не теряются лоты,
+        которые поиск площадки не находит из-за формы слова."""
+        if not self.enabled:
+            return []
+        import aiohttp
+
+        found: dict[str, LotData] = {}
+        async with aiohttp.ClientSession(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=40)) as s:
+            url, offset = None, 0
+            for _ in range(pages):
+                try:
+                    data = await self._page(s, url, "", offset)
+                except Exception as e:
+                    self.last_error = f"{type(e).__name__}: {e}"[:300]
+                    log.warning("zakup.gov.kz: свежие лоты — %s", self.last_error)
+                    break
+                rows = data.get("results") or []
+                for row in rows:
+                    if isinstance(row, dict) and is_open(row):
+                        lot = row_to_lot(row)
+                        if lot:
+                            found.setdefault(lot.ext_id, lot)
+                nxt = data.get("next")
+                if not rows or not nxt or urlparse(str(nxt)).netloc != "zakup.gov.kz":
+                    break
+                url, offset = str(nxt), offset + PAGE
+                await asyncio.sleep(PAUSE)
+        if getattr(self, "no_ordering", False):
+            log.warning("zakup.gov.kz: сортировка по дате не принимается — свежий проход неполный")
+        return list(found.values())
+
     async def fetch_fresh(self) -> list[LotData]:
-        """Быстрый проход: только первая страница по каждому направлению."""
-        lots = await self.search(self.keywords, max_pages=1)
+        """Быстрый проход: все свежие лоты площадки + первая страница по каждому направлению."""
+        lots = {l.ext_id: l for l in await self.fetch_latest()}
+        if self.keywords:
+            for l in await self.search(self.keywords, max_pages=1):
+                lots.setdefault(l.ext_id, l)
+        lots = list(lots.values())
         pubs = [l.published_at for l in lots if l.published_at]
         if pubs:
             log.info("zakup.gov.kz быстрый проход: %d лотов, самый свежий опубликован %s", len(lots), max(pubs).isoformat())

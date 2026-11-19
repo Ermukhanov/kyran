@@ -688,6 +688,17 @@ async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         for user in users:
             if not billing.current_plan(user)[1]:
                 continue
+            if not (user.keywords or []):
+                try:
+                    await context.bot.send_message(
+                        user.id,
+                        "⚠️ У вас не указаны направления, поэтому Kyran не может присылать тендеры.\n"
+                        "Напишите, что поставляет компания, например: <i>мебель, канцтовары, ремонт кровли</i> — "
+                        "или откройте кабинет → «Подбор закупок».",
+                        parse_mode=ParseMode.HTML, reply_markup=open_app_markup("Указать направления"))
+                except Exception:
+                    log.exception("Напоминание о направлениях не отправилось %s", user.id)
+                continue
             rows = (await s.execute(
                 select(Lot, Match).join(Match, and_(Match.lot_id == Lot.id, Match.user_id == user.id))
                 .where(Match.notified.is_(False), Match.hidden.is_(False), core.open_condition())
