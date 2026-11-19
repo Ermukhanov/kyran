@@ -64,7 +64,7 @@ async def lifespan(_: FastAPI):
     selftest = asyncio.create_task(zakup_selftest())
 
     async def leads_once():
-        if os.environ.get("KYRAN_LEADS_SCAN", "1") != "1":
+        if os.environ.get("KYRAN_LEADS_SCAN", "0") != "1":
             return
         await asyncio.sleep(20)
         try:
