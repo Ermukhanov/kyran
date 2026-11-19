@@ -80,7 +80,13 @@ async def lifespan(_: FastAPI):
                             info += "; " + t[:300]
                         log.info("Разведка zakup.sk.kz %s %s -> %s", qs, body, info)
         except Exception as e:
-            log.warning("Разведка zakup.sk.kz: %s", e)
+            log.warning("Разведка zakup.sk.kz: %r", e)
+        try:
+            async with aiohttp.ClientSession(headers=hdr, timeout=aiohttp.ClientTimeout(total=20)) as s:
+                async with s.get("https://zakup.sk.kz/") as r:
+                    log.info("Разведка zakup.sk.kz главная: HTTP %s, %d байт", r.status, len(await r.read()))
+        except Exception as e:
+            log.warning("Разведка zakup.sk.kz главная: %r", e)
 
     async def zakup_selftest():
         z = next((x for x in SOURCES if x.name == "zakup" and x.enabled), None)
