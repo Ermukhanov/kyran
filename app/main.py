@@ -53,9 +53,6 @@ async def lifespan(_: FastAPI):
         z = next((x for x in SOURCES if x.name == "zakup" and x.enabled), None)
         if z:
             log.info("Самопроверка zakup.gov.kz:\n%s", await z.diagnose("кабель", True))
-            for q in ("ремонт кровли", "кровли ремонт", "ремо кровл", "кровл", "ремонт кровати", "мебель", "мебел", "поставка мебели"):
-                d = await z.diagnose(q, True)
-                log.info("Самопроверка поиска «%s»: %s", q, " | ".join(d.splitlines()[1:3]))
             from app.services import results
             log.info("Самопроверка конкурентов: «мебель» -> %s, «ремонт кровли» -> %s",
                      await results.codes_for_query("мебель"), await results.codes_for_query("ремонт кровли"))

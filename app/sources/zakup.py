@@ -32,6 +32,22 @@ PAGE = 50
 MAX_PAGES = int(os.environ.get("ZAKUP_MAX_PAGES", "4"))        # на одно направление
 MAX_QUERIES = int(os.environ.get("ZAKUP_MAX_QUERIES", "60"))    # направлений за один сбор
 PAUSE = float(os.environ.get("ZAKUP_PAUSE", "0.6"))             # секунд между запросами
+
+
+def remote_queries(phrases: list[str]) -> list[str]:
+    """zakup.gov.kz ищет запрос как подстроку названия лота целиком:
+    «мебель» -> 5 лотов, «мебел» -> 70, «поставка мебели» -> 0.
+    Поэтому на площадку отправляем основу самого длинного значимого слова фразы,
+    а остальные слова проверяет наш подбор (matcher.phrase_matches)."""
+    from app.services.matcher import query_stems
+
+    out: list[str] = []
+    for ph in phrases:
+        stems = sorted(query_stems(ph), key=lambda x: (-len(x), x))
+        q = stems[0] if stems else str(ph).strip().lower()
+        if len(q) >= 3 and q not in out:
+            out.append(q)
+    return out
 HEADERS = {
     "Accept": "application/json",
     "Accept-Language": "ru-RU,ru;q=0.9",
@@ -142,6 +158,7 @@ class ZakupSource:
             return []
         import aiohttp
 
+        queries = remote_queries(queries)
         found: dict[str, LotData] = {}
         errors = 0
         async with aiohttp.ClientSession(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=40)) as s:
