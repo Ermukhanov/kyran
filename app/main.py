@@ -68,8 +68,8 @@ async def lifespan(_: FastAPI):
             return
         await asyncio.sleep(20)
         try:
-            from app.services.leads import find_aktobe_suppliers
-            await find_aktobe_suppliers()
+            from app.services.leads import find_aktobe_education
+            await find_aktobe_education()
         except Exception:
             log.exception("Лиды: поиск не удался")
     leads_task = asyncio.create_task(leads_once())

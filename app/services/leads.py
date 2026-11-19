@@ -89,3 +89,44 @@ async def find_aktobe_suppliers(top: int = 45, customers_max: int = 70) -> list[
                  i, x["name"], x["bin"], x["contracts"], x["customers"], f'{x["sum"]:,}'.replace(",", " "),
                  " / ".join(x["examples"]), x["contacts"])
     return out
+
+
+EDU_QUERIES = ("ясли-сад", "детский сад", "бөбекжай", "балабақша", "мини-центр", "школа-гимназия", "школа-лицей")
+
+
+async def find_aktobe_education(max_per_query: int = 200) -> list[dict]:
+    """Садики и школы Актюбинской области (КАТО 15…) с телефоном и почтой из карточки на goszakup."""
+    if not enabled():
+        return []
+    found: dict[int, dict] = {}
+    async with Client() as c:
+        for q in EDU_QUERIES:
+            try:
+                rows = await c.list("/public/organizations/", {"q": q}, max_per_query)
+            except Exception as e:
+                log.warning("Лиды-образование «%s»: %s", q, e)
+                continue
+            for o in rows:
+                kato = str(o.get("kato") or "")
+                name = str(o.get("name_ru") or o.get("full_name_ru") or o.get("name") or "")
+                if o.get("id") and (kato.startswith("15") or "актоб" in name.lower() or "ақтөбе" in name.lower()):
+                    found[int(o["id"])] = {"id": int(o["id"]), "name": name, "kato": kato, "bin": str(o.get("iin_bin") or "")}
+        log.info("Лиды-образование: найдено организаций %d", len(found))
+        out = []
+        for oid, x in list(found.items())[:120]:
+            try:
+                d = await c.get(f"/public/organizations/{oid}/")
+            except Exception:
+                continue
+            if not isinstance(d, dict):
+                continue
+            x["phone"] = str(d.get("phone") or "")[:120]
+            x["email"] = str(d.get("email") or "")[:120]
+            addrs = d.get("addresses") or []
+            a0 = addrs[0] if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict) else {}
+            x["address"] = str(a0.get("address_ru") or a0.get("address") or "")[:160]
+            out.append(x)
+    for i, x in enumerate(out, 1):
+        log.info("Сад/школа %03d | %s | БИН %s | КАТО %s | тел %s | %s | %s",
+                 i, x["name"], x["bin"], x["kato"], x["phone"], x["email"], x["address"])
+    return out
