@@ -168,13 +168,19 @@ async def search(q: str, u: User = Depends(get_user), s: AsyncSession = Depends(
     if len(q.strip()) < 3:
         return {"items": []}
     await core.fetch_for(s, [q.strip()], timeout=15)  # живой поиск по zakup.gov.kz, результат кэшируется в базе
-    hits = await core.search(s, q.strip(), core.profile_of(u), limit=30)
-    items = []
+    hits = await core.search(s, q.strip(), core.profile_of(u), limit=60)
+    items, seen = [], {}
     for lot, score, reason in hits:
+        # одинаковые лоты одного заказчика (один объявление, несколько лотов) — одной строкой
+        key = (lot.title.strip().lower(), (lot.customer or "").strip().lower(), lot.amount, aware(lot.deadline))
+        if key in seen:
+            seen[key]["same_lots"] += 1
+            continue
         d = lot_json(lot)
-        d["score"], d["reason"] = score, reason
+        d["score"], d["reason"], d["same_lots"] = score, reason, 1
+        seen[key] = d
         items.append(d)
-    return {"items": items}
+    return {"items": items[:30]}
 
 
 async def _lot_or_404(s: AsyncSession, lot_id: int, u: User | None = None) -> Lot:

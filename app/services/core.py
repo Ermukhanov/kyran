@@ -31,6 +31,12 @@ def open_condition(now: datetime | None = None):
     return or_(Lot.deadline.is_(None), Lot.deadline > now)
 
 
+def actionable_condition(now: datetime | None = None):
+    """Открыт и до конца приёма заявок ещё есть время подать (MIN_HOURS_LEFT)."""
+    now = now or utcnow()
+    return or_(Lot.deadline.is_(None), Lot.deadline > now + timedelta(hours=config.MIN_HOURS_LEFT))
+
+
 # ── Лоты ───────────────────────────────────────────────────
 
 async def upsert_lots(s: AsyncSession, items: list[LotData]) -> list[Lot]:
@@ -217,7 +223,7 @@ async def feed(
         .where(Match.hidden.is_(False))
     )
     if not include_closed:
-        stmt = stmt.where(open_condition())
+        stmt = stmt.where(actionable_condition())
     if only_urgent:
         stmt = stmt.where(Lot.deadline <= utcnow() + timedelta(days=config.URGENT_DAYS))
     if query:
@@ -231,14 +237,16 @@ async def search(s: AsyncSession, text: str, profile: Profile | None = None, lim
     """Разовый поиск по открытым лотам (не сохраняется)."""
     p = profile or Profile()
     p = Profile(keywords=[text], min_amount=p.min_amount, max_amount=p.max_amount, regions=p.regions)
-    lots = (await s.execute(select(Lot).where(open_condition(), Lot.source != "upload")
+    lots = (await s.execute(select(Lot).where(actionable_condition(), Lot.source != "upload")
                              .order_by(Lot.fetched_at.desc()).limit(5000))).scalars().all()
     hits = []
     for lot in lots:
         h = keyword_hit(lot.title, lot.description, lot.amount, lot.region, p)
         if h:
             hits.append((lot, h.score, h.reason))
-    hits.sort(key=lambda x: (-x[1], aware(x[0].deadline) or datetime.max.replace(tzinfo=timezone.utc)))
+    # лучшие совпадения, среди равных — свежеопубликованные
+    old = datetime.min.replace(tzinfo=timezone.utc)
+    hits.sort(key=lambda x: (-x[1], -(aware(x[0].published_at) or aware(x[0].fetched_at) or old).timestamp()))
     return hits[:limit]
 
 
@@ -246,7 +254,7 @@ async def user_stats(s: AsyncSession, user: User) -> dict:
     base = (
         select(func.count(Lot.id), func.coalesce(func.sum(Lot.amount), 0))
         .join(Match, and_(Match.lot_id == Lot.id, Match.user_id == user.id))
-        .where(open_condition(), Match.hidden.is_(False))
+        .where(actionable_condition(), Match.hidden.is_(False))
     )
     count, total = (await s.execute(base)).one()
     urgent = (await s.execute(base.where(Lot.deadline <= utcnow() + timedelta(days=config.URGENT_DAYS)))).one()[0]

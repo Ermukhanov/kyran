@@ -57,6 +57,7 @@ WEBSITE_EVERY_MIN = int(os.environ.get("WEBSITE_EVERY_MIN", "180"))
 DIGEST_HOUR = int(os.environ.get("DIGEST_HOUR", "9"))
 DIGEST_SIZE = int(os.environ.get("DIGEST_SIZE", "8"))
 URGENT_DAYS = int(os.environ.get("URGENT_DAYS", "3"))
+MIN_HOURS_LEFT = int(os.environ.get("KYRAN_MIN_HOURS_LEFT", "12"))  # лоты, до конца приёма которых меньше — уже не успеть
 
 # ── Оплата ──
 # Текст с реквизитами (Kaspi / счёт), который увидит клиент после заявки на тариф

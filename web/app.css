@@ -539,3 +539,6 @@ body.auth .view { padding: 0; max-width: none; }
   .toast { bottom: calc(var(--tabbar) + 16px + env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* поиск по всей базе — отдельная плашка над результатами */
+.search-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:12px 16px;margin-bottom:12px;border:1px solid var(--line,#e5e7eb);border-radius:12px;background:var(--soft,#f6f7f9);font-size:14px}

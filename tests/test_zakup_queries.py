@@ -36,3 +36,11 @@ def test_fetch_fresh_works_without_keywords(monkeypatch):
     monkeypatch.setattr(z, "fetch_latest", latest)
     monkeypatch.setattr(z, "search", search)
     assert [l.ext_id for l in asyncio.run(z.fetch_fresh())] == ["1"]
+
+
+def test_actionable_condition_hides_lots_closing_soon():
+    from datetime import timedelta
+    from app.services.core import actionable_condition
+    from app.db import utcnow
+    c = str(actionable_condition(utcnow()).compile(compile_kwargs={"literal_binds": False}))
+    assert "deadline" in c

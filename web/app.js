@@ -126,7 +126,7 @@
     const inWork = Object.entries(s.pipeline || {}).filter(([k]) => k !== "lost" && k !== "won").reduce((a, [, v]) => a + v, 0);
     view.innerHTML = `
       <div class="page-head">
-        <div><h1>Тендеры под вашу компанию</h1><p class="page-sub">Открытые закупки, отобранные по профилю. Отсортированы по совпадению.</p></div>
+        <div><h1>Тендеры под вашу компанию</h1><p class="page-sub">Открытые закупки по вашему профилю, где ещё можно успеть подать заявку.</p></div>
       </div>
       <a class="missed" id="missed" href="#report" hidden></a>
       <section class="kpis" aria-label="Сводка">
@@ -169,7 +169,8 @@
 
   async function loadLots() {
     try {
-      const q = new URLSearchParams({ q: state.query, urgent: state.filter === "urgent" });
+      state.everywhere = "";
+    const q = new URLSearchParams({ q: state.query, urgent: state.filter === "urgent" });
       state.items = (await api("/feed?" + q)).items;
       drawResults();
     } catch (e) { results(`<div class="empty"><p>${esc(e.message)}</p></div>`); }
@@ -201,7 +202,7 @@
       const left = timeLeft(l.hours_left);
       return `<tr data-id="${l.id}">
         <td>${matchCell(l.score)}</td>
-        <td><div class="cell-title">${esc(l.title)}</div><div class="cell-sub">${esc(l.customer || "Заказчик не указан")}</div>
+        <td><div class="cell-title">${esc(l.title)}${l.same_lots > 1 ? ` <span class="tag">${l.same_lots} ${plural(l.same_lots, "лот", "лота", "лотов")}</span>` : ""}</div><div class="cell-sub">${esc(l.customer || "Заказчик не указан")}</div>
           ${l.stage ? `<div class="tags">${stageTag(l.stage)}</div>` : ""}</td>
         <td class="cell-sub">${esc(l.region || "—")}</td>
         <td class="right"><span class="amount">${esc(money(l.amount))}</span></td>
@@ -216,9 +217,14 @@
         <div class="row-foot"><span class="amount">${esc(moneyShort(l.amount))}</span><span class="left ${left.cls}">${esc(left.text)}</span></div>
       </a>`;
     }).join("");
-    results(`<table class="grid">
+    const banner = state.everywhere
+      ? `<div class="search-banner"><span>Поиск по всей базе «${esc(state.everywhere)}»: ${items.length} ${plural(items.length, "закупка", "закупки", "закупок")}, где ещё можно успеть подать заявку. Сводка выше — по вашей подборке.</span><button type="button" class="btn" data-back-feed>Вернуться к подборке</button></div>`
+      : "";
+    results(banner + `<table class="grid">
       <thead><tr>${th("score", "Совпадение")}${th("title", "Закупка")}<th>Регион</th>${th("amount", "Сумма", "right")}${th("deadline", "Приём заявок до")}</tr></thead>
       <tbody>${rows}</tbody></table><div class="list">${list}</div>`);
+    const bf = document.querySelector("[data-back-feed]");
+    if (bf) bf.addEventListener("click", () => { const i = view.querySelector(".search"); if (i) i.value = ""; state.query = ""; loadLots(); });
     document.querySelectorAll("#results tbody tr").forEach((tr) => tr.addEventListener("click", () => (location.hash = "#lot/" + tr.dataset.id)));
     document.querySelectorAll("#results th[data-sort]").forEach((h) => h.addEventListener("click", () => {
       const k = h.dataset.sort;
@@ -231,6 +237,8 @@
     if (q.length < 3) return toast("Введите не менее трёх символов");
     results(`<div>${'<div class="skeleton-row"></div>'.repeat(4)}</div>`);
     state.items = (await api("/search?q=" + encodeURIComponent(q))).items;
+    state.everywhere = q;
+    if (state.sort.key === "score") state.sort = { key: "score", dir: -1 };
     drawResults("<h2>Ничего не найдено</h2><p>Попробуйте другие формулировки.</p>");
   }
 
