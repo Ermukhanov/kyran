@@ -27,7 +27,8 @@ SYSTEM = """Ты — Kyran, ИИ-агент для поставщиков гос
 Когда пользователь просит найти, следить, изменить профиль или разобрать тендер — вызывай инструменты,
 а не объясняй, как это сделать. Никогда не выдумывай тендеры, суммы и даты — только из результатов инструментов.
 Найденные тендеры бот покажет карточками сам — в ответе перескажи главное в 1–3 строках.
-Демо-лоты (is_demo) — учебные примеры, если они попались, честно скажи об этом."""
+Демо-лоты (is_demo) — учебные примеры, если они попались, честно скажи об этом.
+Отвечай только на текущий вопрос: не добавляй «уточнений к прошлым ответам» и не пересказывай историю диалога."""
 
 TOOLS = [
     {"name": "search_tenders", "description": (
@@ -106,7 +107,11 @@ class AgentRun:
         if name == "my_tenders":
             rows = await core.feed(s, u, only_urgent=bool(args.get("only_urgent")), limit=8)
             self.shown_lots += [l.id for l, _, _ in rows]
-            return [lot_brief(l, m.score) for l, m, _ in rows] or "Пока нет подобранных тендеров"
+            if not rows:
+                return "Пока нет подобранных тендеров"
+            stats = await core.user_stats(s, u)
+            return {"total_open_matched": stats.get("open"), "total_amount": stats.get("total_amount"),
+                    "urgent_3_days": stats.get("urgent"), "top": [lot_brief(l, m.score) for l, m, _ in rows]}
         if name == "analyze_tender":
             lot = await s.get(Lot, int(args["lot_id"]))
             if not lot or (lot.source == "upload" and (lot.raw or {}).get("owner") != u.id):
