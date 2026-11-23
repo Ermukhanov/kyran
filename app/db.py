@@ -64,6 +64,9 @@ class User(Base):
     plan_notice: Mapped[str] = mapped_column(String(40), default="", server_default="")
     # Пробная неделя PRO даётся один раз на Telegram ID (новичкам — сразу при регистрации)
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Откуда пришёл: ch_<id> — Telegram-канал с тендерами, ref_<id> — партнёр
+    source: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    referred_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class Lot(Base):
@@ -285,6 +288,46 @@ class UpgradeRequest(Base):
     months: Mapped[int] = mapped_column(Integer, default=1)
     contact: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[str] = mapped_column(String(20), default="new")  # new / done / cancelled
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Channel(Base):
+    """Telegram-канал с тендерами по нише/региону: бот сам публикует лучшие лоты (канал трафика)."""
+    __tablename__ = "channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat: Mapped[str] = mapped_column(String(100), unique=True)        # @username или -100… id
+    title: Mapped[str] = mapped_column(String(200), default="")
+    keywords: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    region: Mapped[str] = mapped_column(String(100), default="")
+    min_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    per_post: Mapped[int] = mapped_column(Integer, default=5)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ChannelPost(Base):
+    __tablename__ = "channel_posts"
+    __table_args__ = (UniqueConstraint("channel_id", "lot_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_id: Mapped[int] = mapped_column(Integer, ForeignKey("channels.id", ondelete="CASCADE"))
+    lot_id: Mapped[int] = mapped_column(Integer, ForeignKey("lots.id", ondelete="CASCADE"))
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PartnerEarning(Base):
+    """Начисление партнёру: процент с оплаты приведённого им клиента."""
+    __tablename__ = "partner_earnings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    partner_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    client_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    plan: Mapped[str] = mapped_column(String(20))
+    months: Mapped[int] = mapped_column(Integer, default=1)
+    amount: Mapped[int] = mapped_column(Integer, default=0)       # оплата клиента, ₸
+    commission: Mapped[int] = mapped_column(Integer, default=0)   # к выплате партнёру, ₸
+    paid_out: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

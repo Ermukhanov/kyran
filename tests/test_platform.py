@@ -472,3 +472,38 @@ def test_trial_endpoint_once(client, tmp_path):
     me = client.get("/api/me").json()
     assert me["plan"]["code"] == "trial" and me["plan"]["trial_available"] is False
     assert client.post("/api/billing/trial").status_code == 409
+
+
+def test_partner_and_channel_growth(tmp_path):
+    """Реферал записывается один раз; оплата клиента начисляет партнёру 25%; канал собирает тендеры."""
+    from app.db import Channel
+    from app.services import growth
+
+    db.configure(f"sqlite+aiosqlite:///{tmp_path / 'g.db'}")
+
+    async def run():
+        await db.init_db()
+        async with db.Session() as s:
+            partner = await core_user(s, 501)
+            client = await core_user(s, 502)
+            assert await growth.attribute(s, client, "ref_501") == "partner"
+            assert await growth.attribute(s, client, "ref_999") == ""  # второй раз не перезаписывается
+            billing.grant(client, "start", 3)
+            e = await growth.on_payment(s, client, "start", 3)
+            assert e.commission == round(14_900 * 3 * 0.25)
+            r = await growth.partner_summary(s, partner)
+            assert r == {"invited": 1, "paying": 1, "earned": e.commission, "to_pay": e.commission}
+            data = growth.parse_channel_args("@kyran_remont Ремонт и строительство | ремонт кровли, строительство | Актюбинская | 1000000")
+            assert data["keywords"] == ["ремонт кровли", "строительство"] and data["region"] == "Актюбинская" and data["min_amount"] == 1e6
+            ch = Channel(**data)
+            s.add(ch)
+            await s.commit()
+            lots, total, amount = await growth.pick_lots(s, ch)
+            text = growth.channel_post_text(ch, lots, total, amount, "kyran_test_bot")
+            assert "Тендеры дня" in text and "@kyran_test_bot" in text
+
+    async def core_user(s, uid):
+        from app.services import core
+        return await core.get_or_create_user(s, uid, f"u{uid}")
+
+    asyncio.run(run())

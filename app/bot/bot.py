@@ -19,8 +19,8 @@ from app import config, db, runtime
 from app.ai import agent, client as ai
 from app.api.auth import make_link_token
 from app.bot import texts as T
-from app.db import Document, Lot, Match, Monitor, PipelineItem, UpgradeRequest, User, aware, utcnow
-from app.services import billing, competitors as rivals, core, docgen, login, monitors, report, uploads
+from app.db import Channel, Document, Lot, Match, Monitor, PartnerEarning, PipelineItem, UpgradeRequest, User, aware, utcnow
+from app.services import billing, competitors as rivals, core, docgen, growth, login, monitors, report, uploads
 from app.services.matcher import parse_keywords
 from app.sources.registry import SOURCES
 
@@ -111,7 +111,14 @@ async def login_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    await load_user(update)
+    user = await load_user(update)
+    arg = context.args[0] if context.args else ""
+    if arg:
+        async with db.Session() as s:
+            u = await s.get(User, user.id)
+            how = await growth.attribute(s, u, arg) if u else ""
+        if how == "partner" and u and billing.current_plan(u)[0].code == "trial":
+            await reply(update, "Вас пригласил партнёр Kyran — для вас неделя PRO бесплатно уже включена.")
     await reply(update, T.WELCOME)
     return KEYWORDS
 
@@ -432,6 +439,152 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await context.bot.send_message(uid, f"Тариф «{billing.PLANS[plan].name}» подключён до {until}. Спасибо, что выбрали Kyran.")
     except Exception:
         pass
+    async with db.Session() as s:
+        client = await s.get(User, uid)
+        earning = await growth.on_payment(s, client, plan, months) if client else None
+    if earning:
+        await reply(update, f"Партнёру {earning.partner_id} начислено {earning.commission:,} ₸.".replace(",", " "))
+        try:
+            await context.bot.send_message(
+                earning.partner_id, f"💸 Ваш клиент оплатил Kyran. Вам начислено <b>{earning.commission:,} ₸</b>. "
+                "Баланс и выплаты — /partner".replace(",", " "), parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+
+# ── Партнёрская программа и каналы ─────────────────────────
+
+async def partner_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, update.effective_user.id, update.effective_user.full_name)
+        r = await growth.partner_summary(s, user)
+    link = f"https://t.me/{runtime.bot_username}?start=ref_{user.id}"
+    await reply(update,
+        "<b>Партнёрская программа Kyran</b>\n"
+        f"Приводите компании — получайте <b>{int(growth.PARTNER_SHARE * 100)}%</b> с каждой их оплаты в течение 12 месяцев. "
+        "Подходит бухгалтерам, тендерным консультантам и всем, у кого есть знакомые поставщики.\n\n"
+        f"Ваша ссылка:\n<code>{link}</code>\n\n"
+        f"Пришло по ссылке: {r['invited']}\nОплатили: {r['paying']}\n"
+        f"Заработано: {r['earned']:,} ₸, к выплате: {r['to_pay']:,} ₸\n\n".replace(",", " ")
+        + "Клиент по вашей ссылке получает неделю PRO бесплатно. Выплата — на Kaspi или на счёт, раз в месяц.")
+
+
+def _is_admin(update: Update) -> bool:
+    return update.effective_user.id in config.ADMIN_IDS
+
+
+async def channel_add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Админ: /channel_add @chat Название | ремонт, строительство | Актюбинская | 1000000"""
+    if not _is_admin(update):
+        return
+    raw = (update.message.text or "").split(maxsplit=1)
+    try:
+        data = growth.parse_channel_args(raw[1] if len(raw) > 1 else "")
+    except ValueError as e:
+        await reply(update, f"{T.escape(str(e))}\nФормат: /channel_add @chat Название | ремонт, кровля | Актюбинская | 1000000")
+        return
+    try:
+        chat = await context.bot.get_chat(data["chat"])
+        me = await context.bot.get_chat_member(chat.id, context.bot.id)
+        if me.status not in ("administrator", "creator"):
+            await reply(update, "Сначала добавьте бота администратором канала с правом публикации.")
+            return
+    except Exception as e:
+        await reply(update, f"Не вижу канал {T.escape(data['chat'])}: {T.escape(str(e))}. Добавьте бота админом.")
+        return
+    async with db.Session() as s:
+        ch = (await s.execute(select(Channel).where(Channel.chat == data["chat"]))).scalar_one_or_none() or Channel(chat=data["chat"])
+        ch.title, ch.keywords, ch.region, ch.min_amount, ch.active = data["title"], data["keywords"], data["region"], data["min_amount"], True
+        s.add(ch)
+        await s.commit()
+        lots, total, amount = await growth.pick_lots(s, ch)
+    await reply(update, f"Канал #{ch.id} {T.escape(ch.chat)} сохранён: {T.escape(', '.join(ch.keywords))}"
+                        f"{' · ' + T.escape(ch.region) if ch.region else ''}. Сейчас подходит {total} тендеров. "
+                        f"Опубликовать сразу: /channel_post {ch.id}")
+
+
+async def channels_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update):
+        return
+    async with db.Session() as s:
+        rows = await growth.channel_stats(s)
+    if not rows:
+        await reply(update, "Каналов нет. Добавить: /channel_add @chat Название | ремонт, кровля | Актюбинская")
+        return
+    await reply(update, "\n".join(
+        f"#{c.id} {T.escape(c.chat)} {'✅' if c.active else '⏸'} — {T.escape(', '.join(c.keywords or []))}"
+        f"{' · ' + T.escape(c.region) if c.region else ''}\n   пришло в бота: {n}, платят: {p}" for c, n, p in rows))
+
+
+async def channel_post_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update):
+        return
+    if not context.args:
+        await reply(update, "Формат: /channel_post <номер канала>")
+        return
+    async with db.Session() as s:
+        ch = await s.get(Channel, int(context.args[0])) if context.args[0].isdigit() else \
+            (await s.execute(select(Channel).where(Channel.chat == context.args[0]))).scalar_one_or_none()
+        if not ch:
+            await reply(update, "Канал не найден: /channels")
+            return
+        n = await post_channel(context, s, ch)
+    await reply(update, f"Опубликовано в {T.escape(ch.chat)}: {n} тендеров." if n else "Новых подходящих тендеров для канала нет.")
+
+
+async def channel_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update) or not context.args or not context.args[0].isdigit():
+        return
+    async with db.Session() as s:
+        ch = await s.get(Channel, int(context.args[0]))
+        if ch:
+            ch.active = not ch.active
+            await s.commit()
+            await reply(update, f"Канал {T.escape(ch.chat)}: {'включён' if ch.active else 'на паузе'}.")
+
+
+async def partners_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Админ: кому сколько выплатить. /paid <partner_id> — отметить выплату."""
+    if not _is_admin(update):
+        return
+    async with db.Session() as s:
+        rows = await growth.partners_debt(s)
+    await reply(update, "\n".join(f"{u.id} {T.escape(u.name or '')} @{T.escape(u.username or '')}: {d:,} ₸".replace(",", " ")
+                                  for u, d in rows) or "Долгов партнёрам нет.")
+
+
+async def paid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update) or not context.args or not context.args[0].isdigit():
+        return
+    from sqlalchemy import update as sa_update
+
+    async with db.Session() as s:
+        await s.execute(sa_update(PartnerEarning).where(PartnerEarning.partner_id == int(context.args[0]),
+                                                        PartnerEarning.paid_out.is_(False)).values(paid_out=True))
+        await s.commit()
+    await reply(update, "Выплата отмечена.")
+
+
+async def post_channel(context: ContextTypes.DEFAULT_TYPE, s, ch: Channel) -> int:
+    lots, total, amount = await growth.pick_lots(s, ch)
+    if not lots:
+        return 0
+    text = growth.channel_post_text(ch, lots, total, amount, runtime.bot_username)
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔔 Получать такие тендеры под свою компанию",
+                                                         url=f"https://t.me/{runtime.bot_username}?start=ch_{ch.id}")]])
+    await context.bot.send_message(ch.chat, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW, reply_markup=markup)
+    await growth.mark_posted(s, ch, lots)
+    return len(lots)
+
+
+async def channels_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with db.Session() as s:
+        for ch in (await s.execute(select(Channel).where(Channel.active.is_(True)))).scalars().all():
+            try:
+                n = await post_channel(context, s, ch)
+                log.info("Канал %s: опубликовано %d", ch.chat, n)
+            except Exception:
+                log.exception("Публикация в канал %s не удалась", ch.chat)
 
 
 # ── Мониторинг сайтов (только в боте) ──────────────────────
@@ -1010,7 +1163,7 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         ("app", "Открыть Kyran"), ("find", "Лучшие тендеры сейчас"), ("urgent", "Срочные"),
         ("profile", "Мой профиль"), ("sites", "Сайты под наблюдением"), ("watch", "Следить за сайтом"),
-        ("report", "Итоги недели"), ("rivals", "Конкуренты"), ("follow", "Следить за конкурентом"), ("plan", "Мой тариф"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
+        ("report", "Итоги недели"), ("rivals", "Конкуренты"), ("follow", "Следить за конкурентом"), ("plan", "Мой тариф"), ("partner", "Партнёрам: 25% с оплат"), ("web", "Ссылка для компьютера"), ("start", "Настроить заново"), ("help", "Помощь"),
     ])
 
 
@@ -1034,7 +1187,9 @@ def build() -> Application:
                      ("logout_all", logout_all_cmd), ("plan", plan_cmd), ("grant", grant_cmd),
                      ("watch", watch_cmd), ("sites", sites_cmd), ("unwatch", unwatch_cmd), ("report", report_cmd),
                      ("follow", follow_cmd), ("rivals", rivals_cmd), ("unfollow", unfollow_cmd),
-                     ("zakup", zakup_cmd)]:
+                     ("zakup", zakup_cmd), ("partner", partner_cmd), ("channel_add", channel_add_cmd),
+                     ("channels", channels_cmd), ("channel_post", channel_post_cmd), ("channel_off", channel_off_cmd),
+                     ("partners", partners_cmd), ("paid", paid_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
     application.add_handler(CallbackQueryHandler(on_trial_button, pattern=r"^trial:start$"))
@@ -1051,4 +1206,6 @@ def build() -> Application:
     jq.run_repeating(reminders_job, interval=3600, first=60)
     jq.run_repeating(rivals_job, interval=config.COLLECT_EVERY_MIN * 60, first=180)
     jq.run_daily(weekly_report_job, time=dtime(hour=10, tzinfo=config.TZ), days=(1,))  # понедельник
+    for hour in (10, 17):  # каналы с тендерами: утром и после обеда
+        jq.run_daily(channels_job, time=dtime(hour=hour, minute=5, tzinfo=config.TZ))
     return application
