@@ -66,14 +66,49 @@ class Hit:
     reason: str
 
 
+# Регион пользователь пишет как угодно: «Актюбинская», «Актобе», «Ақтөбе облысы».
+# На площадке в адресе поставки: «Актюбинская область, г.Актобе, …» или «область Абай, …».
+REGION_ALIASES = {
+    "актюб": ["актюб", "актобе", "ақтөбе"], "актобе": ["актюб", "актобе", "ақтөбе"], "ақтөбе": ["актюб", "актобе", "ақтөбе"],
+    "алматы": ["алматы", "алма-ат"], "алмат": ["алматин", "алматы", "алма"], "астан": ["астана", "нур-султан", "нұр-сұлтан"],
+    "шымкент": ["шымкент"], "атырау": ["атырау"], "мангист": ["мангист", "маңғыст", "актау", "ақтау"],
+    "актау": ["мангист", "актау", "ақтау"], "караганд": ["караганд", "қарағанд"], "костан": ["костанай", "қостанай"],
+    "павлодар": ["павлодар"], "кызылорд": ["кызылорд", "қызылорд"], "туркест": ["туркестан", "түркістан"],
+    "жамбыл": ["жамбыл", "тараз"], "тараз": ["жамбыл", "тараз"], "уральск": ["западно-казах", "уральск", "орал"],
+    "западно": ["западно-казах", "уральск", "орал"], "восточно": ["восточно-казах", "усть-камен", "өскемен"],
+    "северо": ["северо-казах", "петропавл"], "петропавл": ["северо-казах", "петропавл"], "акмол": ["акмолин", "ақмола", "кокшет", "көкшет"],
+    "абай": ["абай", "семей"], "семей": ["абай", "семей"], "жетіс": ["жетіс", "жетыс", "талдыкорг"], "жетыс": ["жетіс", "жетыс", "талдыкорг"],
+    "ұлытау": ["ұлытау", "улытау", "жезказг"], "улытау": ["ұлытау", "улытау", "жезказг"],
+}
+
+
+def region_matches(wanted: str, region: str) -> bool:
+    w, r = _norm(wanted).strip(), _norm(region)
+    if not w:
+        return True
+    if w in r or (len(r) > 3 and r in w):
+        return True
+    for word in _WORD.findall(w):
+        if len(word) < 4 or word.startswith(("облас", "облыс", "город", "район", "аудан", "респуб", "казах")):
+            continue
+        for key, variants in REGION_ALIASES.items():
+            if word.startswith(key) or (len(word) >= 5 and key.startswith(word[:5])):
+                if any(v in r for v in variants):
+                    return True
+        stem = _stem(word)
+        if len(stem) >= 5 and stem in r:
+            return True
+    return False
+
+
 def passes_filters(amount: float | None, region: str, p: Profile) -> bool:
     if amount is not None:
         if p.min_amount is not None and amount < p.min_amount:
             return False
         if p.max_amount is not None and amount > p.max_amount:
             return False
-    if p.regions and region:
-        if not any(r.lower() in region.lower() or region.lower() in r.lower() for r in p.regions):
+    if p.regions:
+        if not region or not any(region_matches(r, region) for r in p.regions):
             return False
     return True
 

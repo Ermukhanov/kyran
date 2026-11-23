@@ -189,7 +189,9 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, company_bin
             if info and info.get("name"):
                 user.company_name = info["name"]
         await s.commit()
-        await core.fetch_for(s, user.keywords or [])
+        await reply(update, "🔎 Ищу открытые закупки под ваш профиль по всем площадкам…")
+        if not await core.index_is_full(s):  # база ещё не собрана целиком — дотягиваем по словам
+            await core.fetch_for(s, user.keywords or [])
         await core.rematch_user(s, user)
         stats = await core.user_stats(s, user)
         top = await core.feed(s, user, limit=3)
@@ -676,8 +678,14 @@ async def fresh_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def collect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Полный сбор раз в час: всё, что не попало в быстрый проход."""
     async with db.Session() as s:
+        first_full = not await core.index_is_full(s)
         new = await core.collect(s, SOURCES)
-        if new:
+        if new and first_full:
+            # Первый полный обход принёс десятки тысяч лотов, опубликованных давно:
+            # подбираем их молча (лента и утренняя подборка), без «новых» уведомлений.
+            matches = await core.match_new_lots(s, new)
+            log.info("Первый полный обход: %d лотов, подборки для %d пользователей (без уведомлений)", len(new), len(matches))
+        elif new:
             await _notify_new(context, s, new, "Полный сбор")
 
 

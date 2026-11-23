@@ -30,9 +30,14 @@ SYSTEM = """Ты — Kyran, ИИ-агент для поставщиков гос
 Демо-лоты (is_demo) — учебные примеры, если они попались, честно скажи об этом."""
 
 TOOLS = [
-    {"name": "search_tenders", "description": "Поиск открытых тендеров по словам. Возвращает до 8 лучших.",
+    {"name": "search_tenders", "description": (
+        "Поиск по ВСЕМ открытым закупкам Казахстана (zakup.gov.kz: госзакупки, Самрук-Қазына и др.). "
+        "Ищет по названию, описанию и заказчику. Возвращает до 8 лучших и общее число найденных. "
+        "Регион и заказчика передавай отдельными полями, а не в query."),
      "input_schema": {"type": "object", "properties": {
-         "query": {"type": "string", "description": "что ищем, например 'ремонт кровли'"},
+         "query": {"type": "string", "description": "предмет закупки коротко: 'ремонт кровли', 'мебель', 'ремонт школ'"},
+         "region": {"type": "string", "description": "область или город, например 'Актюбинская', 'Алматы'"},
+         "customer": {"type": "string", "description": "заказчик или его тип: 'школа', 'акимат', 'больница'"},
          "min_amount": {"type": "number"}, "max_amount": {"type": "number"}}, "required": ["query"]}},
     {"name": "add_keywords", "description": "Добавить направления в профиль, чтобы агент сам присылал такие тендеры.",
      "input_schema": {"type": "object", "properties": {"keywords": {"type": "array", "items": {"type": "string"}}}, "required": ["keywords"]}},
@@ -72,10 +77,16 @@ class AgentRun:
             p = core.profile_of(u)
             p.min_amount = args.get("min_amount", p.min_amount)
             p.max_amount = args.get("max_amount", p.max_amount)
-            await core.fetch_for(s, [args["query"]], timeout=15)
-            hits = await core.search(s, args["query"], p, limit=8)
+            if not await core.index_is_full(s):
+                await core.fetch_for(s, [args["query"]], timeout=15)
+            hits = await core.search(s, args["query"], p, limit=200,
+                                     region=args.get("region") or "", customer=args.get("customer") or "")
+            total = len(hits)
+            hits = hits[:8]
             self.shown_lots += [l.id for l, _, _ in hits]
-            return [lot_brief(l, sc) for l, sc, _ in hits] or "Ничего не найдено"
+            if not hits:
+                return "Ничего не найдено среди открытых закупок"
+            return {"found_total": total if total < 200 else "200+", "top": [lot_brief(l, sc) for l, sc, _ in hits]}
         if name in ("add_keywords", "remove_keywords"):
             kws = [k for item in args.get("keywords", []) for k in parse_keywords(item)]
             current = list(u.keywords or [])

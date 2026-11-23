@@ -12,7 +12,7 @@ from app import config
 from app.ai import client as ai
 from app.ai.scoring import score_lots
 from app.db import Lot, Match, PipelineItem, User, aware, utcnow
-from app.services.matcher import Profile, keyword_hit
+from app.services.matcher import Profile, keyword_hit, passes_filters, query_stems
 from app.sources.base import LotData, Source
 
 log = logging.getLogger(__name__)
@@ -39,6 +39,26 @@ def actionable_condition(now: datetime | None = None):
 
 # ── Лоты ───────────────────────────────────────────────────
 
+def lot_text(lot: Lot) -> str:
+    """Описание + заказчик: «ремонт школ» часто есть только в имени заказчика («…школа №6»)."""
+    return f"{lot.description or ''} {lot.customer or ''}"
+
+
+def text_prefilter(phrases: list[str]):
+    """Грубый отбор в базе, чтобы не гонять 30 тыс. лотов через Python: для каждой фразы
+    все её основы слов должны встречаться в названии, описании или заказчике."""
+    from sqlalchemy import and_, or_
+
+    conds = []
+    for ph in phrases:
+        stems = [st for st in query_stems(ph) if len(st) >= 3]
+        if not stems:
+            continue
+        conds.append(and_(*[or_(Lot.title.ilike(f"%{st}%"), Lot.description.ilike(f"%{st}%"), Lot.customer.ilike(f"%{st}%"))
+                            for st in stems]))
+    return or_(*conds) if conds else None
+
+
 async def upsert_lots(s: AsyncSession, items: list[LotData]) -> list[Lot]:
     """Сохраняет лоты, возвращает только НОВЫЕ."""
     if not items:
@@ -48,8 +68,10 @@ async def upsert_lots(s: AsyncSession, items: list[LotData]) -> list[Lot]:
         by_source.setdefault(it.source, set()).add(it.ext_id)
     existing: set[tuple[str, str]] = set()
     for source, ids in by_source.items():
-        rows = await s.execute(select(Lot.source, Lot.ext_id).where(Lot.source == source, Lot.ext_id.in_(ids)))
-        existing |= {(a, b) for a, b in rows.all()}
+        ids = list(ids)
+        for i in range(0, len(ids), 5000):  # у PostgreSQL лимит параметров в запросе
+            rows = await s.execute(select(Lot.source, Lot.ext_id).where(Lot.source == source, Lot.ext_id.in_(ids[i:i + 5000])))
+            existing |= {(a, b) for a, b in rows.all()}
 
     new: list[Lot] = []
     seen: set[tuple[str, str]] = set()
@@ -89,6 +111,12 @@ async def fetch_for(s: AsyncSession, keywords: list[str], timeout: float = 25) -
         await match_new_lots(s, new)
         await s.commit()
     return len(new)
+
+
+async def index_is_full(s: AsyncSession) -> bool:
+    """Полный обход площадки уже прошёл (в базе тысячи открытых лотов) — живой поиск по словам не нужен."""
+    n = (await s.execute(select(func.count()).select_from(Lot).where(open_condition(), Lot.source == "zakup"))).scalar() or 0
+    return n >= 5000
 
 
 async def all_keywords(s: AsyncSession) -> list[str]:
@@ -156,7 +184,7 @@ async def match_user(s: AsyncSession, user: User, lots: list[Lot]) -> list[Match
     for lot in lots:
         if lot.id in already:
             continue
-        hit = keyword_hit(lot.title, lot.description, lot.amount, lot.region, profile)
+        hit = keyword_hit(lot.title, lot_text(lot), lot.amount, lot.region, profile)
         if hit:
             candidates.append((lot, hit.score, hit.reason))
 
@@ -196,14 +224,18 @@ async def match_new_lots(s: AsyncSession, lots: list[Lot]) -> dict[int, list[Mat
     return out
 
 
-async def rematch_user(s: AsyncSession, user: User, limit: int = 3000) -> list[Match]:
+async def rematch_user(s: AsyncSession, user: User, limit: int = 20000) -> list[Match]:
     """После смены профиля: убираем старые подборки (кроме тех, что в воронке) и подбираем заново."""
     in_pipeline = select(PipelineItem.lot_id).where(PipelineItem.user_id == user.id)
     old = (await s.execute(select(Match).where(Match.user_id == user.id, Match.lot_id.not_in(in_pipeline)))).scalars().all()
     for m in old:
         await s.delete(m)
     await s.flush()
-    lots = (await s.execute(select(Lot).where(open_condition()).order_by(Lot.fetched_at.desc()).limit(limit))).scalars().all()
+    q = select(Lot).where(open_condition())
+    pre = text_prefilter(user.keywords or [])
+    if pre is not None:
+        q = q.where(pre)
+    lots = (await s.execute(q.order_by(Lot.fetched_at.desc()).limit(limit))).scalars().all()
     created = await match_user(s, user, list(lots))
     await s.commit()
     return created
@@ -233,15 +265,27 @@ async def feed(
     return [(l, m, st) for l, m, st in (await s.execute(stmt)).all()]
 
 
-async def search(s: AsyncSession, text: str, profile: Profile | None = None, limit: int = 10) -> list[tuple[Lot, int, str]]:
-    """Разовый поиск по открытым лотам (не сохраняется)."""
+async def search(s: AsyncSession, text: str, profile: Profile | None = None, limit: int = 10,
+                 region: str = "", customer: str = "") -> list[tuple[Lot, int, str]]:
+    """Разовый поиск по ВСЕМ открытым лотам (не сохраняется): название, описание, заказчик, регион."""
     p = profile or Profile()
-    p = Profile(keywords=[text], min_amount=p.min_amount, max_amount=p.max_amount, regions=p.regions)
-    lots = (await s.execute(select(Lot).where(actionable_condition(), Lot.source != "upload")
-                             .order_by(Lot.fetched_at.desc()).limit(5000))).scalars().all()
+    regions = [region] if region else list(p.regions or [])
+    p = Profile(keywords=[text] if text else [], min_amount=p.min_amount, max_amount=p.max_amount, regions=regions)
+    q = select(Lot).where(actionable_condition(), Lot.source != "upload")
+    pre = text_prefilter([text] if text else [])
+    if pre is not None:
+        q = q.where(pre)
+    if customer:
+        for stem in query_stems(customer):
+            q = q.where(Lot.customer.ilike(f"%{stem}%"))
+    lots = (await s.execute(q.order_by(Lot.fetched_at.desc()).limit(20000))).scalars().all()
     hits = []
     for lot in lots:
-        h = keyword_hit(lot.title, lot.description, lot.amount, lot.region, p)
+        if not p.keywords:  # искали только по заказчику/региону
+            if passes_filters(lot.amount, lot.region, p):
+                hits.append((lot, 60, "Подходит по заказчику и региону"))
+            continue
+        h = keyword_hit(lot.title, lot_text(lot), lot.amount, lot.region, p)
         if h:
             hits.append((lot, h.score, h.reason))
     # лучшие совпадения, среди равных — свежеопубликованные

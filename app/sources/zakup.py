@@ -33,6 +33,9 @@ MAX_PAGES = int(os.environ.get("ZAKUP_MAX_PAGES", "4"))        # на одно �
 MAX_QUERIES = int(os.environ.get("ZAKUP_MAX_QUERIES", "60"))    # направлений за один сбор
 LATEST_PAGES = int(os.environ.get("ZAKUP_LATEST_PAGES", "4"))   # свежих страниц по 50 лотов за быстрый проход
 PAUSE = float(os.environ.get("ZAKUP_PAUSE", "0.6"))             # секунд между запросами
+SWEEP_PAGE = 100                                                   # больше площадка не отдаёт
+WINDOW_MAX = 9500                                                  # глубже 10 000-й строки площадка не пускает
+SWEEP_PAUSE = float(os.environ.get("ZAKUP_SWEEP_PAUSE", "0.35"))
 
 
 def remote_queries(phrases: list[str]) -> list[str]:
@@ -275,8 +278,76 @@ class ZakupSource:
             lines.append(f"Ответ — {type(data).__name__}")
         return "\n".join(lines)
 
+    async def _count(self, session, gte: datetime, lt: datetime) -> int:
+        params = {"limit": 1, "offset": 0, "offer_end_date__gte": gte.isoformat(), "offer_end_date__lt": lt.isoformat()}
+        async with session.get(API, params=params) as resp:
+            data = await self._json(resp)
+        return int(data.get("count") or 0)
+
+    async def sweep_all(self) -> list[LotData]:
+        """ВСЕ открытые лоты площадки (~30 тыс.), а не только по словам пользователей.
+
+        Площадка отдаёт максимум 100 строк за запрос и не дальше 10 000-й строки, поэтому
+        режем выборку на окна по дате окончания приёма заявок, каждое меньше 10 000.
+        Дальше наш подбор сам ищет по названию, описанию, заказчику и региону —
+        раньше Kyran видел только лоты по направлениям пользователей + 200 свежих,
+        и запросы вроде «ремонт школ в Актюбинской области» ничего не находили."""
+        if not self.enabled:
+            return []
+        import aiohttp
+        from datetime import timedelta
+
+        found: dict[str, LotData] = {}
+        now = datetime.now(timezone.utc)
+        horizon = now + timedelta(days=400)
+        async with aiohttp.ClientSession(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=60)) as s:
+            windows: list[tuple[datetime, datetime]] = []
+            stack = [(now, horizon)]
+            while stack:
+                a, b = stack.pop()
+                try:
+                    n = await self._count(s, a, b)
+                except Exception as e:
+                    self.last_error = f"{type(e).__name__}: {e}"[:300]
+                    log.warning("zakup.gov.kz: подсчёт окна — %s", self.last_error)
+                    return list(found.values())
+                await asyncio.sleep(SWEEP_PAUSE)
+                if n == 0:
+                    continue
+                if n > WINDOW_MAX and (b - a) > timedelta(minutes=2):
+                    mid = a + (b - a) / 2
+                    stack += [(mid, b), (a, mid)]
+                else:
+                    windows.append((a, b))
+            for a, b in sorted(windows):
+                offset = 0
+                while offset < WINDOW_MAX:
+                    params = {"limit": SWEEP_PAGE, "offset": offset,
+                              "offer_end_date__gte": a.isoformat(), "offer_end_date__lt": b.isoformat()}
+                    try:
+                        async with s.get(API, params=params) as resp:
+                            data = await self._json(resp)
+                    except Exception as e:
+                        self.last_error = f"{type(e).__name__}: {e}"[:300]
+                        log.warning("zakup.gov.kz: окно %s — %s", a.isoformat(), self.last_error)
+                        break
+                    rows = data.get("results") or []
+                    for row in rows:
+                        if isinstance(row, dict) and is_open(row):
+                            lot = row_to_lot(row)
+                            if lot:
+                                found.setdefault(lot.ext_id, lot)
+                    if len(rows) < SWEEP_PAGE or not data.get("next"):
+                        break
+                    offset += SWEEP_PAGE
+                    await asyncio.sleep(SWEEP_PAUSE)
+        if found:
+            self.last_ok, self.last_error = datetime.now(timezone.utc), ""
+        log.info("zakup.gov.kz полный обход: %d открытых лотов, окон: %d", len(found), len(windows))
+        return list(found.values())
+
     async def fetch(self) -> list[LotData]:
-        return await self.search(self.keywords)
+        return await self.sweep_all()
 
 
 BASE = API.split("/public/")[0]  # https://zakup.gov.kz/api/core/api
