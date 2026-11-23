@@ -171,8 +171,17 @@
     try {
       state.everywhere = "";
     const q = new URLSearchParams({ q: state.query, urgent: state.filter === "urgent" });
-      state.items = (await api("/feed?" + q)).items;
+      const data = await api("/feed?" + q);
+      state.items = data.items;
+      state.locked = data.locked || 0;
       drawResults();
+      if (state.locked) {
+        const el = document.getElementById("results");
+        if (el) el.insertAdjacentHTML("beforeend", `<a class="locked-more" href="#profile/plan">
+          <b>Ещё ${state.locked} ${plural(state.locked, "подходящий тендер", "подходящих тендера", "подходящих тендеров")}</b>
+          <span>На бесплатном тарифе видно 10 лучших. На «Старте» — все тендеры, ИИ-оценка каждого и уведомление через 5 минут после публикации.</span>
+          <span class="locked-cta">Выбрать тариф</span></a>`);
+      }
     } catch (e) { results(`<div class="empty"><p>${esc(e.message)}</p></div>`); }
   }
 
@@ -1117,9 +1126,10 @@
       </div></section>
       <div class="plans">${p.catalog.map((c) => `<section class="plan ${c.code === "pro" ? "featured" : ""} ${c.code === p.code && p.active ? "current" : ""}">
         ${c.code === "pro" ? `<span class="plan-flag">Выбор большинства</span>` : ""}
-        <h3>${esc(c.name)}</h3><div class="price">${c.price.toLocaleString("ru-RU")} ₸<small>/мес</small></div>
+        <h3>${esc(c.name)}</h3><div class="price">${c.price ? c.price.toLocaleString("ru-RU") + ' ₸<small>/мес</small>' : "0 ₸"}</div>
         <ul>${c.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
-        ${c.code === p.code && p.active ? `<button class="btn btn-block" data-plan="${c.code}">Продлить</button>` : `<button class="btn ${c.code === "pro" ? "btn-primary" : ""} btn-block" data-plan="${c.code}">Подключить</button>`}
+        ${!c.price ? (c.code === p.code ? `<button class="btn btn-block" disabled>Ваш тариф</button>` : `<button class="btn btn-block" disabled>После пробного периода</button>`)
+          : c.code === p.code && p.active ? `<button class="btn btn-block" data-plan="${c.code}">Продлить</button>` : `<button class="btn ${c.code === "pro" ? "btn-primary" : ""} btn-block" data-plan="${c.code}">Подключить</button>`}
       </section>`).join("")}</div>
       <p class="hint" style="margin-top:12px">Оплата по счёту для ТОО и ИП или через Kaspi. При оплате за 12 месяцев — 2 месяца в подарок.</p>
       <section class="panel" id="req" hidden></section>`;

@@ -135,9 +135,9 @@
         <div class="plan ${p.code === "pro" ? "featured" : ""}">
           ${p.code === "pro" ? '<span class="flag">Выбор большинства</span>' : ""}
           <h3>${esc(p.name)}</h3>
-          <div class="amount">${fmt(p.price)} ₸<small>/мес</small></div>
+          <div class="amount">${p.price ? fmt(p.price) + ' ₸<small>/мес</small>' : "0 ₸<small> навсегда</small>"}</div>
           <ul>${p.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
-          <a class="btn ${p.code === "pro" ? "btn-primary" : ""}" href="/app">Начать бесплатно</a>
+          <a class="btn ${p.code === "pro" ? "btn-primary" : ""}" href="/app">${p.price ? "14 дней бесплатно" : "Начать"}</a>
         </div>`).join("");
       if (d.bot) { const b = document.getElementById("cta-bot"); b.href = "https://t.me/" + d.bot; b.hidden = false; }
     }).catch(() => {});

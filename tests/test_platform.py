@@ -60,7 +60,9 @@ def test_plan_trial_and_grant():
     plan, active, until = billing.current_plan(u)
     assert plan.code == "trial" and active and (until - utcnow()).days in (13, 14)
     u.created_at = utcnow() - timedelta(days=20)
-    assert billing.current_plan(u)[1] is False
+    assert billing.raw_plan(u)[1] is False
+    plan, active, until = billing.current_plan(u)  # пробный кончился — бесплатный тариф, а не отключение
+    assert plan.code == "free" and active and until is None and not billing.is_paid(u)
     billing.grant(u, "pro", 1)
     plan, active, until = billing.current_plan(u)
     assert plan.code == "pro" and active and (until - utcnow()).days >= 29
@@ -114,7 +116,7 @@ def test_document_limit(client, monkeypatch):
 
 def test_upgrade_request_and_me_plan(client):
     me = client.get("/api/me").json()
-    assert me["plan"]["code"] == "trial" and me["plan"]["active"] and len(me["plan"]["catalog"]) == 3
+    assert me["plan"]["code"] == "trial" and me["plan"]["active"] and [c["code"] for c in me["plan"]["catalog"]] == ["free", "start", "pro", "team"]
     assert me["bot"] == "kyran_test_bot"
     r = client.post("/api/billing/request", json={"plan": "pro", "months": 3, "contact": "+77001112233"})
     assert r.status_code == 200 and r.json()["id"]
@@ -161,7 +163,7 @@ def test_landing_and_public_plans(client):
     html = client.get("/", headers={"Authorization": ""}).text
     assert "Kyran" in html and "/api/plans" in html
     plans = client.get("/api/plans", headers={"Authorization": ""}).json()
-    assert [p["code"] for p in plans["plans"]] == ["start", "pro", "team"] and plans["bot"] == "kyran_test_bot"
+    assert [p["code"] for p in plans["plans"]] == ["free", "start", "pro", "team"] and plans["bot"] == "kyran_test_bot"
 
 
 def test_expired_plan_blocks_analysis(client, tmp_path):
@@ -173,10 +175,16 @@ def test_expired_plan_blocks_analysis(client, tmp_path):
     con.commit()
     con.close()
     me = client.get("/api/me").json()
-    assert me["plan"]["active"] is False
+    assert me["plan"]["code"] == "free" and me["plan"]["limits"]["analyses"] == 1
     lot_id = client.get("/api/search?q=ремонт").json()["items"][0]["id"]
-    r = client.post(f"/api/lots/{lot_id}/analyze")
-    assert r.status_code == 402 and "истёк" in r.json()["detail"]
+    con = sqlite3.connect(tmp_path / "p.db", timeout=10)  # бесплатный разбор в этом месяце уже потрачен
+    con.execute("INSERT INTO analyses (user_id, lot_id, verdict, data, model, created_at) VALUES (2002, ?, 'go', '{}', 'x', ?)",
+                (lot_id, utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")))
+    con.commit()
+    con.close()
+    other = client.get("/api/search?q=ремонт").json()["items"][-1]["id"]
+    r = client.post(f"/api/lots/{other}/analyze")
+    assert r.status_code == 402 and "бесплатном" in r.json()["detail"]
 
 
 def test_generate_application_documents(client, monkeypatch):
@@ -421,3 +429,16 @@ def test_fresh_head_shows_age():
     assert "мин назад" in T.fresh_head(Lot(title="x", published_at=utcnow() - timedelta(minutes=7)))
     assert "Новый для вас" in T.fresh_head(Lot(title="x", published_at=utcnow() - timedelta(days=3)))
     assert "Новый тендер" in T.fresh_head(Lot(title="x"))
+
+
+def test_free_plan_limits():
+    """После пробного периода — бесплатный тариф: 3 направления, без мгновенных уведомлений и ИИ-оценки."""
+    from app.services import core
+
+    u = User(id=7, created_at=utcnow() - timedelta(days=30), plan="trial", token_version=0,
+             keywords=["мебель", "канцтовары", "компьютеры", "ремонт кровли"])
+    plan = billing.current_plan(u)[0]
+    assert plan.code == "free" and not plan.instant and not plan.ai_scoring and plan.feed_limit == 10
+    assert core.profile_of(u).keywords == ["мебель", "канцтовары", "компьютеры"]
+    billing.grant(u, "start", 1)
+    assert billing.is_paid(u) and len(core.profile_of(u).keywords) == 4 and billing.current_plan(u)[0].instant

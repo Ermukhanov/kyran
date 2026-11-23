@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import time as dtime, timedelta
+from datetime import datetime, time as dtime, timedelta
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, MenuButtonWebApp, Update, WebAppInfo,
 )
@@ -345,10 +345,21 @@ async def plan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = await core.get_or_create_user(s, update.effective_user.id)
         used = await billing.usage(s, user)
     plan, active, until = billing.current_plan(user)
+    if plan.code == "free":
+        await reply(update, "Тариф: <b>Бесплатный</b>\n"
+                            "• утренняя подборка — 3 лучших тендера в день\n"
+                            f"• до {plan.keywords} направлений, {plan.chat_per_day} вопросов ИИ-агенту в день\n"
+                            f"• ИИ-разборы в этом месяце: {used['analyses']} из {plan.analyses}\n\n"
+                            "<b>Что даёт «Старт» (14 900 ₸/мес):</b>\n"
+                            "• новый тендер приходит через 5 минут после публикации, а не завтра утром\n"
+                            "• все подходящие тендеры, ИИ-оценка каждого\n"
+                            "• 10 ИИ-разборов и 20 документов заявки в месяц, слежка за конкурентами",
+                    reply_markup=open_app_markup("Выбрать тариф"))
+        return
     until_s = aware(until).astimezone(config.TZ).strftime("%d.%m.%Y") if until else "—"
-    state = f"действует до {until_s}" if active else f"закончился {until_s}"
-    await reply(update, f"Тариф: <b>{plan.name}</b>, {state}\n"
+    await reply(update, f"Тариф: <b>{plan.name}</b>, действует до {until_s}\n"
                         f"ИИ-разборы в этом месяце: {used['analyses']} из {plan.analyses}\n"
+                        f"Документы заявки от ИИ: {used['generations']} из {plan.generations}\n"
                         f"Документы в библиотеке: {used['documents']} из {plan.documents}\n\n"
                         "Сменить тариф можно на сайте: Профиль → Тариф.", reply_markup=open_app_markup("Открыть тарифы"))
 
@@ -589,7 +600,17 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_chat.send_action(ChatAction.TYPING)
 
     user_now = await load_user(update)
-    if ai.available() and billing.current_plan(user_now)[1]:
+    plan_now = billing.current_plan(user_now)[0]
+    today = datetime.now(config.TZ).strftime("%Y-%m-%d")
+    used = context.user_data.get("chat_day") == today and context.user_data.get("chat_used", 0) or 0
+    over_limit = used >= plan_now.chat_per_day
+    if over_limit and not context.user_data.get("chat_limit_told") == today:
+        context.user_data["chat_limit_told"] = today
+        await reply(update, f"На бесплатном тарифе — {plan_now.chat_per_day} вопросов ИИ-агенту в день, они закончились. "
+                            "Дальше ищу простым поиском по словам. Завтра лимит обновится.\n"
+                            "Без ограничений — тариф «Старт», 14 900 ₸/мес: /plan")
+    if ai.available() and not over_limit:
+        context.user_data["chat_day"], context.user_data["chat_used"] = today, used + 1
         history = context.user_data.setdefault("history", [])
         async with db.Session() as s:
             user = await core.get_or_create_user(s, update.effective_user.id, update.effective_user.full_name)
@@ -652,8 +673,8 @@ async def _notify_new(context: ContextTypes.DEFAULT_TYPE, s, new: list[Lot], lab
     log.info("%s: новых лотов %d, подборок для %d пользователей", label, len(new), len(matches))
     for user_id, ms in matches.items():
         user = await s.get(User, user_id)
-        if not user or not user.notify or not billing.current_plan(user)[1]:
-            continue
+        if not user or not user.notify or not billing.current_plan(user)[0].instant:
+            continue  # бесплатный тариф: эти тендеры придут в утренней подборке
         sent = 0
         for m in sorted(ms, key=lambda x: -x.score):
             if sent >= config.INSTANT_PER_RUN:
@@ -707,14 +728,25 @@ async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 except Exception:
                     log.exception("Напоминание о направлениях не отправилось %s", user.id)
                 continue
+            plan = billing.current_plan(user)[0]
+            size = min(config.DIGEST_SIZE, plan.digest_size)
             rows = (await s.execute(
                 select(Lot, Match).join(Match, and_(Match.lot_id == Lot.id, Match.user_id == user.id))
                 .where(Match.notified.is_(False), Match.hidden.is_(False), core.open_condition())
-                .order_by(Match.score.desc()).limit(config.DIGEST_SIZE)
+                .order_by(Match.score.desc()).limit(size)
             )).all()
             if not rows:
                 continue
             text = T.digest([(l, m.score) for l, m in rows], "<b>Тендеры на сегодня</b>")
+            if plan.code == "free":
+                waiting = (await s.execute(
+                    select(func.count(Match.id)).join(Lot, Lot.id == Match.lot_id)
+                    .where(Match.user_id == user.id, Match.notified.is_(False), Match.hidden.is_(False), core.open_condition())
+                )).scalar() or 0
+                more = max(0, waiting - len(rows))
+                if more:
+                    text += (f"\n\nЕщё <b>{more}</b> подходящих тендеров ждут в ленте. На тарифе «Старт» все они "
+                             "приходят сразу — через 5 минут после публикации, пока конкуренты не успели.")
             try:
                 await context.bot.send_message(user.id, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW,
                                                reply_markup=open_app_markup("Смотреть и разобрать"))
@@ -806,7 +838,7 @@ async def rivals_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         for uid, _, _ in found:
             if uid not in active:
                 u = await s.get(User, uid)
-                active[uid] = bool(u and u.notify and billing.current_plan(u)[1])
+                active[uid] = bool(u and u.notify and billing.current_plan(u)[0].competitors > 0)
     for uid, c, wins in found:
         if not active.get(uid):
             continue
@@ -872,19 +904,27 @@ async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 msgs.append((p.user_id, f"До окончания приёма заявок осталось меньше 3 дней:\n{T.card(lot)}", lot_buttons(lot)))
         # Тариф: за 2 дня до окончания и в день окончания
         for user in (await s.execute(select(User).where(User.onboarded.is_(True)))).scalars().all():
-            plan, active, until = billing.current_plan(user, now)
-            if until is None:
+            plan, active, until = billing.raw_plan(user, now)
+            if until is None or plan.code == "free":
                 continue
             stamp = aware(until).astimezone(config.TZ).strftime("%d.%m.%Y")
             what = "пробный период" if plan.code == "trial" else f"тариф «{plan.name}»"
+            stats = await core.user_stats(s, user)
             if not active and user.plan_notice != f"expired:{stamp}":
                 user.plan_notice = f"expired:{stamp}"
-                msgs.append((user.id, f"{what.capitalize()} закончился {stamp}. Подборка, уведомления и ИИ-разборы приостановлены — "
-                                      "данные и документы сохранены. Выберите тариф, чтобы продолжить.", open_app_markup("Выбрать тариф")))
+                msgs.append((user.id,
+                    f"{what.capitalize()} закончился {stamp}. Kyran продолжит работать на бесплатном тарифе:\n"
+                    "• 3 лучших тендера утром вместо всех сразу\n• без ИИ-оценки, 5 вопросов агенту в день\n"
+                    "• 1 ИИ-разбор и 1 документ заявки в месяц\n\n"
+                    f"Сейчас под вас открыто {stats['open']} тендеров на {T.money(stats['total_amount'], short=True)}. "
+                    "Чтобы получать все и сразу — тариф «Старт», 14 900 ₸/мес.", open_app_markup("Выбрать тариф")))
             elif active and until - now <= timedelta(days=2) and not user.plan_notice.startswith(("soon:" + stamp, "expired:" + stamp)):
                 user.plan_notice = f"soon:{stamp}"
-                msgs.append((user.id, f"{what.capitalize()} заканчивается {stamp}. Чтобы подборка и напоминания не остановились, "
-                                      "выберите тариф в разделе «Профиль → Тариф».", open_app_markup("Выбрать тариф")))
+                msgs.append((user.id,
+                    f"{what.capitalize()} заканчивается {stamp}. За это время Kyran нашёл под вас {stats['open']} открытых тендеров "
+                    f"на {T.money(stats['total_amount'], short=True)}. После окончания останется бесплатный тариф: "
+                    "3 тендера в день утром, без мгновенных уведомлений и ИИ-оценки. Продлить — «Профиль → Тариф».",
+                    open_app_markup("Выбрать тариф")))
         docs = (await s.execute(select(Document).where(Document.expires_at.is_not(None)))).scalars().all()
         for d in docs:
             left = aware(d.expires_at) - now

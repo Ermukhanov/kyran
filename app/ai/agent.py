@@ -98,7 +98,14 @@ class AgentRun:
             u.keywords, u.onboarded = current[:30], True
             await s.commit()
             matched = await core.rematch_user(s, u)
-            return {"keywords": u.keywords, "matched_now": len(matched)}
+            from app.services import billing
+
+            cap = billing.current_plan(u)[0].keywords
+            out = {"keywords": u.keywords, "matched_now": len(matched)}
+            if len(u.keywords) > cap:
+                out["plan_note"] = (f"Бесплатный тариф ищет только по первым {cap} направлениям: {', '.join(u.keywords[:cap])}. "
+                                    f"Остальные сохранены и заработают на платном тарифе. {billing.UPGRADE_HINT}")
+            return out
         if name == "set_amount_range":
             u.min_amount, u.max_amount = args.get("min_amount"), args.get("max_amount")
             await s.commit()

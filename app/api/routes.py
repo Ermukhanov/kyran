@@ -48,7 +48,7 @@ async def auth_config():
 @router.get("/plans")
 async def public_plans():
     return {"trial_days": billing.TRIAL_DAYS, "bot": runtime.bot_username, "plans": [
-        {"code": p.code, "name": p.name, "price": p.price, "features": list(p.features)} for p in billing.PLANS.values() if p.code in billing.PAID
+        {"code": p.code, "name": p.name, "price": p.price, "features": list(p.features)} for p in billing.PLANS.values() if p.code in ("free",) + billing.PAID
     ]}
 
 
@@ -159,6 +159,13 @@ async def update_me(body: ProfileIn, u: User = Depends(get_user), s: AsyncSessio
 @router.get("/feed")
 async def feed(q: str = "", urgent: bool = False, offset: int = 0,
                u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    plan = billing.current_plan(u)[0]
+    if plan.feed_limit:
+        # Бесплатно видно лучшие N, остальные — счётчиком «ещё X на платном тарифе»
+        rows = await core.feed(s, u, query=q.strip(), only_urgent=urgent, limit=plan.feed_limit, offset=0) if offset == 0 else []
+        total = (await core.user_stats(s, u))["open"] if not q.strip() and not urgent else len(rows)
+        return {"items": [lot_json(l, m, st) for l, m, st in rows], "locked": max(0, total - len(rows)),
+                "upgrade": billing.UPGRADE_HINT}
     rows = await core.feed(s, u, query=q.strip(), only_urgent=urgent, limit=40, offset=offset)
     return {"items": [lot_json(l, m, st) for l, m, st in rows]}
 
