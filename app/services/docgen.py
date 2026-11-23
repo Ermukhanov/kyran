@@ -153,7 +153,7 @@ def _letterhead(doc, u: User, lot: Lot, *, addressee: bool = True):
     _p(doc, name, size=13, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=0)
     req = [f"БИН {_v(u.company_bin)}"]
     if u.address:
-        req.append(u.address)
+        req.append(", ".join(x.strip() for x in str(u.address).splitlines() if x.strip()))  # адрес в одну строку
     contacts = ", ".join(x for x in [u.phone, u.email] if x)
     if contacts:
         req.append(contacts)
