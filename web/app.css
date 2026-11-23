@@ -548,3 +548,4 @@ body.auth .view { padding: 0; max-width: none; }
 .locked-more b { font-size: 15px; }
 .locked-more span { color: var(--muted, #5b6472); font-size: 13px; }
 .locked-more .locked-cta { color: var(--accent, #1f4fd1); font-weight: 600; }
+.trial-offer .panel-body { display: grid; gap: 6px; justify-items: start; margin-top: 16px; }

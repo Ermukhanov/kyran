@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import config
 from app.db import Analysis, Competitor, Document, GeneratedDoc, User, aware, utcnow
 
-TRIAL_DAYS = 14
+TRIAL_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -39,18 +39,18 @@ PLANS: dict[str, Plan] = {
         "Утренняя подборка: 3 лучших тендера в день", "До 3 направлений", "5 вопросов ИИ-агенту в день",
         "1 ИИ-разбор и 1 документ заявки в месяц", "Воронка и напоминания о сроках"),
         generations=1, competitors=0, keywords=3, chat_per_day=5, instant=False, digest_size=3, ai_scoring=False, feed_limit=10),
-    "trial": Plan("trial", "Пробный период", 0, 10, 30, 1, (
-        "Все функции на 14 дней", "10 ИИ-разборов", "До 30 документов в библиотеке"), 10, 5),
-    "start": Plan("start", "Старт", 14_900, 10, 30, 1, (
+    "trial": Plan("trial", "PRO — пробная неделя", 0, 10, 30, 1, (
+        "Все функции PRO на 7 дней", "10 ИИ-разборов", "До 30 документов в библиотеке"), 10, 5),
+    "start": Plan("start", "PRO", 14_900, 10, 30, 1, (
         "Новый тендер в Telegram через 5 минут после публикации", "Все подходящие тендеры, а не 3 в день",
         "ИИ-оценка каждого тендера 0–100 с объяснением", "До 30 направлений, ИИ-агент без ограничений",
         "10 ИИ-разборов и 20 документов заявки в месяц", "Слежка за 3 конкурентами"), 20, 3),
-    "pro": Plan("pro", "Профи", 29_900, 50, 200, 1, (
-        "Всё из «Старт»", "50 ИИ-разборов в месяц", "Библиотека до 200 документов",
+    "pro": Plan("pro", "PRO Бизнес", 29_900, 50, 200, 1, (
+        "Всё из PRO", "50 ИИ-разборов в месяц", "Библиотека до 200 документов",
         "Документы заявки в Word: 100 в месяц", "Слежка за 20 конкурентами", "Готовность к заявке по каждой закупке",
         "Мониторинг сайтов заказчиков"), 100, 20),
     "team": Plan("team", "Команда", 69_900, 200, 1000, 5, (
-        "Всё из «Профи»", "200 ИИ-разборов в месяц", "Документы заявки в Word: 400 в месяц", "До 5 сотрудников",
+        "Всё из PRO Бизнес", "200 ИИ-разборов в месяц", "Документы заявки в Word: 400 в месяц", "До 5 сотрудников",
         "Слежка за 50 конкурентами", "Приоритетная поддержка"), 400, 50),
 }
 PAID = ("start", "pro", "team")
@@ -81,7 +81,28 @@ def is_paid(user: User) -> bool:
     return current_plan(user)[0].code != "free"
 
 
-UPGRADE_HINT = "Тариф «Старт» — 14 900 ₸/мес: Профиль → Тариф."
+UPGRADE_HINT = "Полный доступ — PRO, 14 900 ₸/мес: /plan"
+
+
+def trial_available(user: User) -> bool:
+    """Пробную неделю PRO можно включить один раз на Telegram ID и только без действующего тарифа."""
+    return not user.trial_used and not is_paid(user)
+
+
+def start_trial(user: User, now: datetime | None = None) -> datetime:
+    if not trial_available(user):
+        raise LimitError("Пробная неделя PRO уже была на этом аккаунте.")
+    now = now or utcnow()
+    user.plan, user.plan_until, user.trial_used, user.plan_notice = "trial", now + timedelta(days=TRIAL_DAYS), True, ""
+    return user.plan_until
+
+
+def free_note(shown: int, total: int) -> str:
+    """Почему бот показывает мало: прямо говорим про бесплатный тариф и PRO."""
+    if total <= shown:
+        return ""
+    return (f"Бесплатный тариф: показываю {shown} из {total} подходящих тендеров. "
+            "Полный список, ИИ-оценку каждого и уведомление через 5 минут после публикации — активируйте PRO.")
 
 
 def month_start(now: datetime | None = None) -> datetime:
@@ -140,4 +161,6 @@ def plan_json(user: User, used: dict[str, int]) -> dict:
             {"code": p.code, "name": p.name, "price": p.price, "features": list(p.features)} for p in PLANS.values() if p.code in ("free",) + PAID
         ],
         "payment_info": config.PAYMENT_INFO,
+        "trial_available": trial_available(user),
+        "trial_days": TRIAL_DAYS,
     }

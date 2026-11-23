@@ -36,7 +36,7 @@
           <h1>Участвуйте только в тех закупках, которые можно выиграть</h1>
           <p class="lead">Kyran каждый час просматривает закупки Казахстана на zakup.gov.kz, отбирает подходящие вашей компании и показывает, по какой цене их обычно выигрывают и кто ваши конкуренты. Документы и сроки под контролем, уведомления — в Telegram.</p>
           <div class="cta">
-            <a class="btn btn-primary btn-lg" href="/app" id="cta-main">Попробовать 14 дней бесплатно</a>
+            <a class="btn btn-primary btn-lg" href="/app" id="cta-main">Попробовать PRO 7 дней бесплатно</a>
             <a class="btn btn-lg" href="#" id="cta-bot" target="_blank" rel="noopener" hidden>Открыть бота в Telegram</a>
           </div>
           <p class="small">Без пароля и без карты: вход через Telegram за минуту.</p>
@@ -94,7 +94,7 @@
     <section class="price" id="price">
       <div class="wrap">
         <h2>Тарифы</h2>
-        <p class="sub">14 дней бесплатно на любом тарифе. Оплата по счёту для ТОО и ИП или через Kaspi. При оплате за год — 2 месяца в подарок.</p>
+        <p class="sub">Неделя PRO бесплатно для каждого нового пользователя, дальше — бесплатный тариф навсегда или PRO. Оплата по счёту для ТОО и ИП или через Kaspi. При оплате за год — 2 месяца в подарок.</p>
         <div class="plans" id="plans"></div>
       </div>
     </section>
@@ -132,12 +132,12 @@
       const fmt = (n) => n.toLocaleString("ru-RU");
       const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
       document.getElementById("plans").innerHTML = d.plans.map((p) => `
-        <div class="plan ${p.code === "pro" ? "featured" : ""}">
-          ${p.code === "pro" ? '<span class="flag">Выбор большинства</span>' : ""}
+        <div class="plan ${p.code === "start" ? "featured" : ""}">
+          ${p.code === "start" ? '<span class="flag">Выбор большинства</span>' : ""}
           <h3>${esc(p.name)}</h3>
           <div class="amount">${p.price ? fmt(p.price) + ' ₸<small>/мес</small>' : "0 ₸<small> навсегда</small>"}</div>
           <ul>${p.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
-          <a class="btn ${p.code === "pro" ? "btn-primary" : ""}" href="/app">${p.price ? "14 дней бесплатно" : "Начать"}</a>
+          <a class="btn ${p.code === "start" ? "btn-primary" : ""}" href="/app">${p.code === "start" ? "7 дней бесплатно" : p.price ? "Подключить" : "Начать"}</a>
         </div>`).join("");
       if (d.bot) { const b = document.getElementById("cta-bot"); b.href = "https://t.me/" + d.bot; b.hidden = false; }
     }).catch(() => {});

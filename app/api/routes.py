@@ -626,6 +626,17 @@ class UpgradeIn(BaseModel):
     contact: str = Field(default="", max_length=200)
 
 
+@router.post("/billing/trial")
+async def billing_trial(u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
+    try:
+        until = billing.start_trial(u)
+    except billing.LimitError as e:
+        raise HTTPException(409, str(e))
+    await s.commit()
+    await core.rematch_user(s, u)
+    return {"ok": True, "until": until.isoformat()}
+
+
 @router.post("/billing/request")
 async def billing_request(body: UpgradeIn, u: User = Depends(get_user), s: AsyncSession = Depends(get_session)):
     if body.plan not in billing.PAID:

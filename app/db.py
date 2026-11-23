@@ -62,6 +62,8 @@ class User(Base):
     bik: Mapped[str] = mapped_column(String(20), default="", server_default="")
     # Какое уведомление о тарифе уже отправлено: "", "soon:<дата>", "expired:<дата>"
     plan_notice: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    # Пробная неделя PRO даётся один раз на Telegram ID (новичкам — сразу при регистрации)
+    trial_used: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class Lot(Base):

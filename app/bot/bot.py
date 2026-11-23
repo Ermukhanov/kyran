@@ -49,6 +49,16 @@ def lot_buttons(lot: Lot) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def pro_markup(user: User | None) -> InlineKeyboardMarkup | None:
+    """Кнопки под сообщением об ограничении: пробная неделя (если ещё не было) и тарифы."""
+    rows = []
+    if user is not None and billing.trial_available(user):
+        rows.append([InlineKeyboardButton("🎁 PRO 7 дней бесплатно", callback_data="trial:start")])
+    if config.PUBLIC_URL:
+        rows.append([InlineKeyboardButton("Активировать PRO", web_app=WebAppInfo(app_url("#profile/plan")))])
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
 def open_app_markup(text: str = "Открыть Kyran") -> InlineKeyboardMarkup | None:
     if not config.PUBLIC_URL:
         return None
@@ -210,7 +220,9 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, company_bin
     await reply(update, head + ".", reply_markup=open_app_markup("Открыть все в Kyran"))
     for lot, m, _ in top:
         await reply(update, T.card(lot, m.score, m.reason), reply_markup=lot_buttons(lot))
-    await reply(update, "Дальше пришлю срочные сразу, а подборку — каждое утро в 9:00. Можете писать мне обычным текстом: <i>найди ремонт спортзалов</i>.")
+    await reply(update, "🎁 У вас включён <b>PRO на 7 дней бесплатно</b>: все подходящие тендеры, уведомление через 5 минут "
+                        "после публикации, ИИ-оценка и разборы. Дальше — бесплатный тариф (3 тендера в день) или PRO за 14 900 ₸/мес.\n\n"
+                        "Можете писать мне обычным текстом: <i>найди ремонт спортзалов в Актобе</i>.")
     return ConversationHandler.END
 
 
@@ -237,13 +249,35 @@ async def web_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Открыть Kyran в браузере", url=f"{config.PUBLIC_URL}/app?t={token}")]]))
 
 
+async def on_trial_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    async with db.Session() as s:
+        user = await core.get_or_create_user(s, q.from_user.id)
+        try:
+            until = billing.start_trial(user)
+        except billing.LimitError as e:
+            await q.answer(str(e), show_alert=True)
+            return
+        await s.commit()
+        await core.rematch_user(s, user)
+        stats = await core.user_stats(s, user)
+    await q.answer("PRO включён на 7 дней")
+    await q.edit_message_reply_markup(None)
+    await reply(update, f"🎁 <b>PRO включён до {aware(until).astimezone(config.TZ).strftime('%d.%m.%Y')}.</b>\n"
+                        f"Под вас открыто {stats['open']} тендеров на {T.money(stats['total_amount'], short=True)} — "
+                        "все в ленте, новые буду присылать через 5 минут после публикации. /find — посмотреть лучшие.",
+                reply_markup=open_app_markup("Открыть все тендеры"))
+
+
 async def show_feed(update: Update, only_urgent: bool) -> None:
     async with db.Session() as s:
         user = await core.get_or_create_user(s, update.effective_user.id)
         if not user.onboarded:
             await reply(update, "Сначала расскажите, что вы поставляете: /start")
             return
-        rows = await core.feed(s, user, only_urgent=only_urgent, limit=5)
+        plan = billing.current_plan(user)[0]
+        rows = await core.feed(s, user, only_urgent=only_urgent, limit=3 if plan.code == "free" else 5)
+        stats = await core.user_stats(s, user)
     if not has_data():
         await reply(update, T.NO_DATA)
         return
@@ -252,6 +286,9 @@ async def show_feed(update: Update, only_urgent: bool) -> None:
         return
     for lot, m, _ in rows:
         await reply(update, T.card(lot, m.score, m.reason), reply_markup=lot_buttons(lot))
+    total = stats["urgent"] if only_urgent else stats["open"]
+    if plan.code == "free" and total > len(rows):
+        await reply(update, billing.free_note(len(rows), total), reply_markup=pro_markup(user))
 
 
 async def find_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -346,15 +383,17 @@ async def plan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         used = await billing.usage(s, user)
     plan, active, until = billing.current_plan(user)
     if plan.code == "free":
-        await reply(update, "Тариф: <b>Бесплатный</b>\n"
-                            "• утренняя подборка — 3 лучших тендера в день\n"
+        trial = billing.trial_available(user)
+        await reply(update, "Тариф: <b>Бесплатный</b> — Kyran показывает только часть тендеров:\n"
+                            "• 3 лучших тендера в день, утром, а не сразу\n"
                             f"• до {plan.keywords} направлений, {plan.chat_per_day} вопросов ИИ-агенту в день\n"
                             f"• ИИ-разборы в этом месяце: {used['analyses']} из {plan.analyses}\n\n"
-                            "<b>Что даёт «Старт» (14 900 ₸/мес):</b>\n"
-                            "• новый тендер приходит через 5 минут после публикации, а не завтра утром\n"
-                            "• все подходящие тендеры, ИИ-оценка каждого\n"
-                            "• 10 ИИ-разборов и 20 документов заявки в месяц, слежка за конкурентами",
-                    reply_markup=open_app_markup("Выбрать тариф"))
+                            "<b>PRO — 14 900 ₸/мес:</b>\n"
+                            "• все подходящие тендеры, без ограничения\n"
+                            "• новый тендер приходит через 5 минут после публикации\n"
+                            "• ИИ-оценка каждого, 10 разборов и 20 документов заявки в месяц, слежка за конкурентами"
+                            + ("\n\n🎁 Попробуйте PRO 7 дней бесплатно — один раз на аккаунт." if trial else ""),
+                    reply_markup=pro_markup(user))
         return
     until_s = aware(until).astimezone(config.TZ).strftime("%d.%m.%Y") if until else "—"
     await reply(update, f"Тариф: <b>{plan.name}</b>, действует до {until_s}\n"
@@ -606,9 +645,9 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     over_limit = used >= plan_now.chat_per_day
     if over_limit and not context.user_data.get("chat_limit_told") == today:
         context.user_data["chat_limit_told"] = today
-        await reply(update, f"На бесплатном тарифе — {plan_now.chat_per_day} вопросов ИИ-агенту в день, они закончились. "
-                            "Дальше ищу простым поиском по словам. Завтра лимит обновится.\n"
-                            "Без ограничений — тариф «Старт», 14 900 ₸/мес: /plan")
+        await reply(update, f"На бесплатном тарифе — {plan_now.chat_per_day} вопросов ИИ-агенту в день, на сегодня они закончились. "
+                            "Дальше ищу простым поиском по словам, завтра лимит обновится.\n"
+                            "ИИ-агент без ограничений — в PRO, 14 900 ₸/мес.", reply_markup=pro_markup(user_now))
     if ai.available() and not over_limit:
         context.user_data["chat_day"], context.user_data["chat_used"] = today, used + 1
         history = context.user_data.setdefault("history", [])
@@ -625,9 +664,17 @@ async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         history += [{"role": "user", "content": text}, {"role": "assistant", "content": answer}]
         del history[:-10]
         await update.effective_message.reply_text(answer, link_preview_options=NO_PREVIEW)
-        for lot in lots:
-            if lot:
+        lots = [l for l in lots if l]
+        if plan_now.code == "free":
+            found = len(dict.fromkeys(run.shown_lots)) if run else len(lots)
+            for lot in lots[:3]:
                 await reply(update, T.card(lot), reply_markup=lot_buttons(lot))
+            if found > 3:
+                await reply(update, f"Бесплатный тариф: показываю 3 карточки из {found}. Все карточки, ИИ-оценку и разборы — "
+                                    "активируйте PRO.", reply_markup=pro_markup(user_now))
+            return
+        for lot in lots:
+            await reply(update, T.card(lot), reply_markup=lot_buttons(lot))
         return
 
     # Без ИИ: ссылка → мониторинг сайта, иначе поиск по словам
@@ -745,11 +792,11 @@ async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )).scalar() or 0
                 more = max(0, waiting - len(rows))
                 if more:
-                    text += (f"\n\nЕщё <b>{more}</b> подходящих тендеров ждут в ленте. На тарифе «Старт» все они "
-                             "приходят сразу — через 5 минут после публикации, пока конкуренты не успели.")
+                    text += "\n\n" + billing.free_note(len(rows), len(rows) + more).replace(
+                        "показываю", "показываю сегодня") + " Пока конкуренты не успели."
             try:
                 await context.bot.send_message(user.id, text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW,
-                                               reply_markup=open_app_markup("Смотреть и разобрать"))
+                                               reply_markup=pro_markup(user) if plan.code == "free" else open_app_markup("Смотреть и разобрать"))
                 for _, m in rows:
                     m.notified = True
             except Exception:
@@ -917,14 +964,14 @@ async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     "• 3 лучших тендера утром вместо всех сразу\n• без ИИ-оценки, 5 вопросов агенту в день\n"
                     "• 1 ИИ-разбор и 1 документ заявки в месяц\n\n"
                     f"Сейчас под вас открыто {stats['open']} тендеров на {T.money(stats['total_amount'], short=True)}. "
-                    "Чтобы получать все и сразу — тариф «Старт», 14 900 ₸/мес.", open_app_markup("Выбрать тариф")))
+                    "Чтобы получать все и сразу — активируйте PRO, 14 900 ₸/мес.", pro_markup(user)))
             elif active and until - now <= timedelta(days=2) and not user.plan_notice.startswith(("soon:" + stamp, "expired:" + stamp)):
                 user.plan_notice = f"soon:{stamp}"
                 msgs.append((user.id,
                     f"{what.capitalize()} заканчивается {stamp}. За это время Kyran нашёл под вас {stats['open']} открытых тендеров "
                     f"на {T.money(stats['total_amount'], short=True)}. После окончания останется бесплатный тариф: "
-                    "3 тендера в день утром, без мгновенных уведомлений и ИИ-оценки. Продлить — «Профиль → Тариф».",
-                    open_app_markup("Выбрать тариф")))
+                    "3 тендера в день утром, без мгновенных уведомлений и ИИ-оценки. Оставить PRO — 14 900 ₸/мес.",
+                    pro_markup(user)))
         docs = (await s.execute(select(Document).where(Document.expires_at.is_not(None)))).scalars().all()
         for d in docs:
             left = aware(d.expires_at) - now
@@ -990,6 +1037,7 @@ def build() -> Application:
                      ("zakup", zakup_cmd)]:
         application.add_handler(CommandHandler(name, fn))
     application.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^(save|hide):\d+$"))
+    application.add_handler(CallbackQueryHandler(on_trial_button, pattern=r"^trial:start$"))
     application.add_handler(CallbackQueryHandler(on_docs_button, pattern=r"^docs:\d+$"))
     application.add_handler(CallbackQueryHandler(on_generate_button, pattern=r"^gen:(tech|clarify|cover|inventory|experience):\d+$"))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, on_upload), group=-1)

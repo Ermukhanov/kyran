@@ -178,9 +178,9 @@
       if (state.locked) {
         const el = document.getElementById("results");
         if (el) el.insertAdjacentHTML("beforeend", `<a class="locked-more" href="#profile/plan">
-          <b>Ещё ${state.locked} ${plural(state.locked, "подходящий тендер", "подходящих тендера", "подходящих тендеров")}</b>
-          <span>На бесплатном тарифе видно 10 лучших. На «Старте» — все тендеры, ИИ-оценка каждого и уведомление через 5 минут после публикации.</span>
-          <span class="locked-cta">Выбрать тариф</span></a>`);
+          <b>Ещё ${state.locked} ${plural(state.locked, "подходящий тендер", "подходящих тендера", "подходящих тендеров")} скрыто</b>
+          <span>Бесплатный тариф показывает 10 лучших. Полный список, ИИ-оценку каждого и уведомление через 5 минут после публикации — активируйте PRO.</span>
+          <span class="locked-cta">${state.me.plan.trial_available ? "Попробовать PRO 7 дней бесплатно" : "Активировать PRO"}</span></a>`);
       }
     } catch (e) { results(`<div class="empty"><p>${esc(e.message)}</p></div>`); }
   }
@@ -1124,15 +1124,28 @@
         <div class="usage"><div><span>Документы заявки от ИИ</span><b>${p.usage.generations} / ${p.limits.generations}</b></div>${bar(p.usage.generations, p.limits.generations)}</div>
         <div class="usage"><div><span>Документы в библиотеке</span><b>${p.usage.documents} / ${p.limits.documents}</b></div>${bar(p.usage.documents, p.limits.documents)}</div>
       </div></section>
-      <div class="plans">${p.catalog.map((c) => `<section class="plan ${c.code === "pro" ? "featured" : ""} ${c.code === p.code && p.active ? "current" : ""}">
-        ${c.code === "pro" ? `<span class="plan-flag">Выбор большинства</span>` : ""}
+      <div class="plans">${p.catalog.map((c) => `<section class="plan ${c.code === "start" ? "featured" : ""} ${c.code === p.code && p.active ? "current" : ""}">
+        ${c.code === "start" ? `<span class="plan-flag">Выбор большинства</span>` : ""}
         <h3>${esc(c.name)}</h3><div class="price">${c.price ? c.price.toLocaleString("ru-RU") + ' ₸<small>/мес</small>' : "0 ₸"}</div>
         <ul>${c.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
         ${!c.price ? (c.code === p.code ? `<button class="btn btn-block" disabled>Ваш тариф</button>` : `<button class="btn btn-block" disabled>После пробного периода</button>`)
-          : c.code === p.code && p.active ? `<button class="btn btn-block" data-plan="${c.code}">Продлить</button>` : `<button class="btn ${c.code === "pro" ? "btn-primary" : ""} btn-block" data-plan="${c.code}">Подключить</button>`}
+          : c.code === p.code && p.active ? `<button class="btn btn-block" data-plan="${c.code}">Продлить</button>` : `<button class="btn ${c.code === "start" ? "btn-primary" : ""} btn-block" data-plan="${c.code}">Подключить</button>`}
       </section>`).join("")}</div>
+      ${p.trial_available ? `<section class="panel trial-offer"><div class="panel-body"><b>PRO на ${p.trial_days} дней бесплатно</b>
+        <span class="cell-sub">Один раз на аккаунт. Все тендеры, ИИ-оценка и мгновенные уведомления. Платить ничего не нужно.</span>
+        <button class="btn btn-primary" data-act="trial">Включить PRO на ${p.trial_days} дней</button></div></section>` : ""}
       <p class="hint" style="margin-top:12px">Оплата по счёту для ТОО и ИП или через Kaspi. При оплате за 12 месяцев — 2 месяца в подарок.</p>
       <section class="panel" id="req" hidden></section>`;
+    const trialBtn = box.querySelector('[data-act="trial"]');
+    if (trialBtn) trialBtn.addEventListener("click", async () => {
+      trialBtn.disabled = true;
+      try {
+        await api("/billing/trial", { method: "POST" });
+        state.me = await api("/me");
+        toast("PRO включён на 7 дней");
+        location.hash = "#feed";
+      } catch (e) { trialBtn.disabled = false; toast(e.message); }
+    });
     box.querySelectorAll("[data-plan]").forEach((b) => b.addEventListener("click", () => {
       const c = p.catalog.find((x) => x.code === b.dataset.plan);
       const req = box.querySelector("#req"); req.hidden = false;

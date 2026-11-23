@@ -58,7 +58,7 @@ def test_login_by_code_and_logout_all(client):
 def test_plan_trial_and_grant():
     u = User(id=1, created_at=utcnow(), plan="trial", token_version=0)
     plan, active, until = billing.current_plan(u)
-    assert plan.code == "trial" and active and (until - utcnow()).days in (13, 14)
+    assert plan.code == "trial" and active and (until - utcnow()).days in (6, 7)
     u.created_at = utcnow() - timedelta(days=20)
     assert billing.raw_plan(u)[1] is False
     plan, active, until = billing.current_plan(u)  # пробный кончился — бесплатный тариф, а не отключение
@@ -442,3 +442,33 @@ def test_free_plan_limits():
     assert core.profile_of(u).keywords == ["мебель", "канцтовары", "компьютеры"]
     billing.grant(u, "start", 1)
     assert billing.is_paid(u) and len(core.profile_of(u).keywords) == 4 and billing.current_plan(u)[0].instant
+
+
+
+def test_trial_week_once_per_id():
+    """Пробная неделя PRO — один раз на Telegram ID; бесплатным показываем, сколько скрыто."""
+    u = User(id=8, created_at=utcnow() - timedelta(days=60), plan="trial", token_version=0, trial_used=False)
+    assert billing.current_plan(u)[0].code == "free" and billing.trial_available(u)
+    until = billing.start_trial(u)
+    assert billing.current_plan(u)[0].code == "trial" and (until - utcnow()).days in (6, 7) and u.trial_used
+    with pytest.raises(billing.LimitError):
+        billing.start_trial(u)
+    u.plan_until = utcnow() - timedelta(days=1)
+    assert billing.current_plan(u)[0].code == "free" and not billing.trial_available(u)
+    assert "3 из 40" in billing.free_note(3, 40) and "PRO" in billing.free_note(3, 40) and billing.free_note(3, 3) == ""
+
+
+def test_trial_endpoint_once(client, tmp_path):
+    import sqlite3
+
+    client.get("/api/me")
+    con = sqlite3.connect(tmp_path / "p.db", timeout=10)
+    con.execute("UPDATE users SET plan='trial', plan_until='2020-01-01 00:00:00.000000', trial_used=0 WHERE id=2002")
+    con.commit()
+    con.close()
+    me = client.get("/api/me").json()
+    assert me["plan"]["code"] == "free" and me["plan"]["trial_available"] is True
+    assert client.post("/api/billing/trial").status_code == 200
+    me = client.get("/api/me").json()
+    assert me["plan"]["code"] == "trial" and me["plan"]["trial_available"] is False
+    assert client.post("/api/billing/trial").status_code == 409

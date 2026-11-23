@@ -345,7 +345,11 @@ async def pipeline(s: AsyncSession, user: User) -> list[tuple[Lot, PipelineItem,
 async def get_or_create_user(s: AsyncSession, tg_id: int, name: str = "", username: str = "") -> User:
     user = await s.get(User, tg_id)
     if user is None:
-        user = User(id=tg_id, name=name, username=username or "")
+        from app.services.billing import TRIAL_DAYS
+
+        # Новичок сразу получает PRO на неделю — один раз на Telegram ID
+        user = User(id=tg_id, name=name, username=username or "", plan="trial",
+                    plan_until=utcnow() + timedelta(days=TRIAL_DAYS), trial_used=True)
         s.add(user)
         await s.commit()
     elif name and user.name != name:
